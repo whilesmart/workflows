@@ -1,0 +1,101 @@
+name: 'Pre-Release Checks'
+description: 'Check if version and changelog are property configured'
+
+inputs:
+  token:
+    description: 'The Github token for authentication'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ inputs.token }}
+
+    - name: Configure Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: Extract version from composer.json
+      id: get_version
+      run: |
+        if [ ! -f "composer.json" ]; then
+          echo "❌ composer.json not found!"
+          exit 1
+        fi
+        
+        VERSION=$(jq -r '.["package-version"] // empty' composer.json)
+        
+        if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+          echo "❌ No package version found in composer.json!"
+          echo "Please add a 'package-version' field to your composer.json file."
+          exit 1
+        fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "✅ Found version: $VERSION"
+      shell: bash
+    - name: Extract release notes from CHANGELOG.md
+      id: get_changelog
+      run: |
+        if [ ! -f "CHANGELOG.md" ]; then
+          echo "❌ CHANGELOG.md not found!"
+          exit 1
+        fi
+        
+        # Extract the latest version section from CHANGELOG.md
+        # This assumes the format: ## [version] - date
+        VERSION="${{ steps.get_version.outputs.version }}"
+        
+        # Create a temporary file to store the release notes
+        TEMP_FILE=$(mktemp)
+        
+        # Find the section for this version and extract content until the next version or end of file
+        awk -v version="$VERSION" '
+        BEGIN { found=0; printing=0 }
+        /^## \[/ {
+          if (found && printing) exit
+          if ($0 ~ "\\[" version "\\]") {
+            found=1
+            printing=1
+            next
+          }
+        }
+        found && printing && /^## \[/ { exit }
+        found && printing { print }
+        ' CHANGELOG.md > "$TEMP_FILE"
+        
+        # Check if we found any content
+        if [ ! -s "$TEMP_FILE" ]; then
+          echo "❌ No changelog entry found for version $VERSION!"
+          echo "Please add a changelog entry in the format: ## [$VERSION] - YYYY-MM-DD"
+          rm "$TEMP_FILE"
+          exit 1
+        fi
+        
+        # Read the content and set as output (handling multiline)
+        {
+          echo 'release_notes<<EOF'
+          cat "$TEMP_FILE"
+          echo 'EOF'
+        } >> $GITHUB_OUTPUT
+        
+        rm "$TEMP_FILE"
+        echo "✅ Found changelog entry for version $VERSION"
+      shell: bash
+
+    - name: Check if tag already exists
+      id: check_tag
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+          echo "❌ Tag v$VERSION already exists!"
+          echo "Please update the version in composer.json before creating a release."
+          exit 1
+        fi
+        echo "✅ Tag v$VERSION does not exist, proceeding..."
+      shell: bash
