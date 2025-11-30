@@ -1,5 +1,5 @@
 name: 'Pre-Release Checks'
-description: 'Check if version and changelog are property configured'
+description: 'Checks if version and changelog are properly configured'
 
 inputs:
   token:

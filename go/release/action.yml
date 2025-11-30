@@ -23,7 +23,7 @@ inputs:
   platforms:
     description: 'Platforms to build for (JSON array)'
     required: false
-    default: '["linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64"]'
+    default: '["linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64", "windows/arm64"]'
   ldflags:
     description: 'Additional ldflags for go build'
     required: false
@@ -39,7 +39,7 @@ outputs:
     value: ${{ steps.get_version.outputs.version }}
   release_url:
     description: 'URL of the created release'
-    value: ${{ steps.create_release.outputs.upload_url }}
+    value: ${{ steps.create_release.outputs.url }}
 
 runs:
   using: "composite"
@@ -228,27 +228,12 @@ runs:
 
           ## Installation
 
-          Download the appropriate binary for your platform from the assets below.
-
-          ### Linux (amd64)
-          ```bash
-          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.tag }}/${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-linux-amd64.tar.gz
-          tar -xzf ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-linux-amd64.tar.gz
-          chmod +x ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-linux-amd64
-          sudo mv ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-linux-amd64 /usr/local/bin/${{ inputs.binary_name }}
-          ```
-
-          ### macOS (Apple Silicon)
-          ```bash
-          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.tag }}/${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-darwin-arm64.tar.gz
-          tar -xzf ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-darwin-arm64.tar.gz
-          chmod +x ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-darwin-arm64
-          sudo mv ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-darwin-arm64 /usr/local/bin/${{ inputs.binary_name }}
-          ```
-
-          ## Checksums
-
-          Verify your download with the checksums file.
+          1. Download the appropriate archive for your platform from the assets below
+          2. Extract the binary:
+             - **Linux/macOS:** `tar -xzf <archive>.tar.gz && chmod +x <binary>`
+             - **Windows:** Extract the `.zip` file
+          3. Move the binary to your PATH (e.g., `/usr/local/bin` on Linux/macOS)
+          4. Verify the download using `checksums.txt`
         draft: ${{ inputs.draft }}
         prerelease: ${{ contains(steps.get_version.outputs.version, '-') }}
         files: |
