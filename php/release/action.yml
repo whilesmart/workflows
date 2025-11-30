@@ -1,0 +1,183 @@
+name: 'Create Release'
+description: 'Extracts version and changelog, creates a release branch, tag, and draft release.'
+inputs:
+  token:
+    description: 'The GitHub token for authentication.'
+    required: true
+  package:
+    description: 'The name of the package to release'
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ inputs.token }}
+
+    - name: Configure Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+      shell: bash
+
+    - name: Extract version from composer.json
+      id: get_version
+      run: |
+        if [ ! -f "composer.json" ]; then
+          echo "❌ composer.json not found!"
+          exit 1
+        fi
+        
+        VERSION=$(jq -r '.["package-version"] // empty' composer.json)
+        
+        if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+          echo "❌ No package version found in composer.json!"
+          echo "Please add a 'package-version' field to your composer.json file."
+          exit 1
+        fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "✅ Found version: $VERSION"
+      shell: bash
+
+    - name: Extract release notes from CHANGELOG.md
+      id: get_changelog
+      run: |
+        if [ ! -f "CHANGELOG.md" ]; then
+          echo "❌ CHANGELOG.md not found!"
+          exit 1
+        fi
+        
+        VERSION="${{ steps.get_version.outputs.version }}"
+        TEMP_FILE=$(mktemp)
+        
+        awk -v version="$VERSION" '
+        BEGIN { found=0; printing=0 }
+        /^## \[/ {
+          if (found && printing) exit
+          if ($0 ~ "\\[" version "\\]") {
+            found=1
+            printing=1
+            next
+          }
+        }
+        found && printing && /^## \[/ { exit }
+        found && printing { print }
+        ' CHANGELOG.md > "$TEMP_FILE"
+        
+        if [ ! -s "$TEMP_FILE" ]; then
+          echo "❌ No changelog entry found for version $VERSION!"
+          rm "$TEMP_FILE"
+          exit 1
+        fi
+        
+        {
+          echo 'release_notes<<EOF'
+          cat "$TEMP_FILE"
+          echo 'EOF'
+        } >> $GITHUB_OUTPUT
+        
+        rm "$TEMP_FILE"
+        echo "✅ Found changelog entry for version $VERSION"
+      shell: bash
+
+    - name: Check if tag already exists
+      id: check_tag
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+          echo "❌ Tag v$VERSION already exists!"
+          exit 1
+        fi
+        echo "✅ Tag v$VERSION does not exist, proceeding..."
+      shell: bash
+
+    - name: Create release branch
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        BRANCH_NAME="release-$VERSION"
+        
+        if git show-ref --verify --quiet refs/heads/$BRANCH_NAME; then
+          echo "❌ Branch $BRANCH_NAME already exists!"
+          exit 1
+        fi
+        
+        git checkout -b $BRANCH_NAME
+        echo "✅ Created release branch: $BRANCH_NAME"
+      shell: bash
+
+    - name: Create and push tag
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        git tag -a "v$VERSION" -m "Release $VERSION"
+        echo "✅ Created tag v$VERSION"
+      shell: bash
+
+    - name: Push changes and tags
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        
+        git push origin "release-$VERSION"
+        echo "✅ Pushed release branch"
+        
+        git push origin "v$VERSION"
+        echo "✅ Pushed tag"
+      shell: bash
+
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+      with:
+        tag_name: v${{ steps.get_version.outputs.version }}
+        release_name: Release ${{ steps.get_version.outputs.version }}
+        body: |
+          ## Release Notes
+          
+          ${{ steps.get_changelog.outputs.release_notes }}
+          
+          ---
+          
+          ## Installation
+          
+          ```bash
+          composer require ${{inputs.package}}
+          ```
+          
+          ## Documentation
+          
+          See the [README](README.md) for usage instructions.
+          
+          ## Full Changelog
+          
+          View the complete version history in [CHANGELOG.md](CHANGELOG.md).
+        draft: true
+        prerelease: false
+
+    - name: Summary
+      if: success()
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        echo "## 🎉 Release Creation Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### ✅ Successfully Created Release v$VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**What was done:**" >> $GITHUB_STEP_SUMMARY
+        echo "- 📖 Extracted version from \`composer.json\`" >> $GITHUB_STEP_SUMMARY
+        echo "- 📝 Extracted release notes from \`CHANGELOG.md\`" >> $GITHUB_STEP_SUMMARY
+        echo "- 🏷️ Created and pushed git tag \`v$VERSION\`" >> $GITHUB_STEP_SUMMARY
+        echo "- 🚀 Created **DRAFT** GitHub release" >> $GITHUB_STEP_SUMMARY
+        echo "- 🌿 Created release branch \`release-$VERSION\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
+        echo "- [📋 View Release](https://github.com/${{ github.repository }}/releases/tag/v$VERSION)" >> $GITHUB_STEP_SUMMARY
+        echo "- [📝 View Changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)" >> $GITHUB_STEP_SUMMARY
+        echo "- [🔄 View Pull Request](https://github.com/${{ github.repository }}/pulls)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📋 Release Notes Preview" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "${{ steps.get_changelog.outputs.release_notes }}" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+      shell: bash
