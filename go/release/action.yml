@@ -1,0 +1,273 @@
+name: 'Go Release'
+description: 'Build cross-platform Go binaries and create a GitHub release'
+
+inputs:
+  token:
+    description: 'GitHub token for authentication'
+    required: true
+  binary_name:
+    description: 'Name of the output binary'
+    required: true
+  version:
+    description: 'Version to release (e.g., 0.1.0). If not provided, extracts from git tag'
+    required: false
+    default: ''
+  build_path:
+    description: 'Path to main.go (e.g., ./cmd/app)'
+    required: false
+    default: '.'
+  go_version:
+    description: 'Go version to use'
+    required: false
+    default: '1.21'
+  platforms:
+    description: 'Platforms to build for (JSON array)'
+    required: false
+    default: '["linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64"]'
+  ldflags:
+    description: 'Additional ldflags for go build'
+    required: false
+    default: ''
+  draft:
+    description: 'Create release as draft'
+    required: false
+    default: 'false'
+
+outputs:
+  version:
+    description: 'The version being released'
+    value: ${{ steps.get_version.outputs.version }}
+  release_url:
+    description: 'URL of the created release'
+    value: ${{ steps.create_release.outputs.upload_url }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ inputs.token }}
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go_version }}
+
+    - name: Configure Git
+      shell: bash
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: Determine version
+      id: get_version
+      shell: bash
+      run: |
+        INPUT_VERSION="${{ inputs.version }}"
+
+        if [ -n "$INPUT_VERSION" ]; then
+          VERSION="${INPUT_VERSION#v}"
+          TAG="v$VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "source=input" >> $GITHUB_OUTPUT
+          echo "✅ Using provided version: $VERSION"
+        elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "source=tag" >> $GITHUB_OUTPUT
+          echo "✅ Using version from tag: $VERSION"
+        else
+          echo "❌ No version provided and not triggered by tag push"
+          echo "Either provide 'version' input or trigger via tag push"
+          exit 1
+        fi
+
+    - name: Create tag if needed
+      shell: bash
+      run: |
+        TAG="${{ steps.get_version.outputs.tag }}"
+        SOURCE="${{ steps.get_version.outputs.source }}"
+
+        if [ "$SOURCE" = "input" ]; then
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "ℹ️ Tag $TAG already exists, using existing tag"
+          else
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            echo "✅ Created and pushed tag: $TAG"
+          fi
+        else
+          echo "ℹ️ Tag already exists (triggered by tag push)"
+        fi
+
+    - name: Extract changelog (optional)
+      id: get_changelog
+      shell: bash
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+
+        if [ ! -f "CHANGELOG.md" ]; then
+          echo "ℹ️ No CHANGELOG.md found, skipping release notes extraction"
+          echo "release_notes=Release $VERSION" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        TEMP_FILE=$(mktemp)
+
+        awk -v version="$VERSION" '
+        BEGIN { found=0; printing=0 }
+        /^## \[/ {
+          if (found && printing) exit
+          if ($0 ~ "\\[" version "\\]") {
+            found=1
+            printing=1
+            next
+          }
+        }
+        found && printing && /^## \[/ { exit }
+        found && printing { print }
+        ' CHANGELOG.md > "$TEMP_FILE"
+
+        if [ ! -s "$TEMP_FILE" ]; then
+          echo "ℹ️ No changelog entry for version $VERSION"
+          echo "release_notes=Release $VERSION" >> $GITHUB_OUTPUT
+        else
+          {
+            echo 'release_notes<<EOF'
+            cat "$TEMP_FILE"
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+          echo "✅ Found changelog entry for version $VERSION"
+        fi
+
+        rm "$TEMP_FILE"
+
+    - name: Build binaries
+      id: build
+      shell: bash
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        BINARY_NAME="${{ inputs.binary_name }}"
+        BUILD_PATH="${{ inputs.build_path }}"
+        EXTRA_LDFLAGS="${{ inputs.ldflags }}"
+
+        BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
+        GIT_COMMIT=$(git rev-parse --short HEAD)
+
+        LDFLAGS="-s -w -X main.Version=$VERSION -X main.BuildTime=$BUILD_TIME -X main.GitCommit=$GIT_COMMIT"
+        if [ -n "$EXTRA_LDFLAGS" ]; then
+          LDFLAGS="$LDFLAGS $EXTRA_LDFLAGS"
+        fi
+
+        mkdir -p dist
+
+        PLATFORMS='${{ inputs.platforms }}'
+
+        echo "$PLATFORMS" | jq -r '.[]' | while read platform; do
+          GOOS="${platform%/*}"
+          GOARCH="${platform#*/}"
+
+          OUTPUT_NAME="${BINARY_NAME}-${VERSION}-${GOOS}-${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            OUTPUT_NAME="${OUTPUT_NAME}.exe"
+          fi
+
+          echo "🔨 Building $OUTPUT_NAME..."
+
+          GOOS=$GOOS GOARCH=$GOARCH go build -ldflags "$LDFLAGS" -o "dist/$OUTPUT_NAME" "$BUILD_PATH"
+
+          if [ $? -eq 0 ]; then
+            echo "✅ Built $OUTPUT_NAME"
+          else
+            echo "❌ Failed to build $OUTPUT_NAME"
+            exit 1
+          fi
+        done
+
+        echo "📦 Creating archives..."
+        cd dist
+        for file in *; do
+          if [ -f "$file" ]; then
+            if [[ "$file" == *.exe ]]; then
+              zip "${file%.exe}.zip" "$file"
+              rm "$file"
+            else
+              tar -czf "${file}.tar.gz" "$file"
+              rm "$file"
+            fi
+          fi
+        done
+        cd ..
+
+        echo "✅ All binaries built successfully"
+        ls -la dist/
+
+    - name: Generate checksums
+      shell: bash
+      run: |
+        cd dist
+        sha256sum * > checksums.txt
+        echo "✅ Generated checksums:"
+        cat checksums.txt
+
+    - name: Create GitHub Release
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.get_version.outputs.tag }}
+        name: Release ${{ steps.get_version.outputs.version }}
+        body: |
+          ## Release Notes
+
+          ${{ steps.get_changelog.outputs.release_notes }}
+
+          ## Installation
+
+          Download the appropriate binary for your platform from the assets below.
+
+          ### Linux (amd64)
+          ```bash
+          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.tag }}/${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-linux-amd64.tar.gz
+          tar -xzf ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-linux-amd64.tar.gz
+          chmod +x ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-linux-amd64
+          sudo mv ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-linux-amd64 /usr/local/bin/${{ inputs.binary_name }}
+          ```
+
+          ### macOS (Apple Silicon)
+          ```bash
+          curl -LO https://github.com/${{ github.repository }}/releases/download/${{ steps.get_version.outputs.tag }}/${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-darwin-arm64.tar.gz
+          tar -xzf ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-darwin-arm64.tar.gz
+          chmod +x ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-darwin-arm64
+          sudo mv ${{ inputs.binary_name }}-${{ steps.get_version.outputs.version }}-darwin-arm64 /usr/local/bin/${{ inputs.binary_name }}
+          ```
+
+          ## Checksums
+
+          Verify your download with the checksums file.
+        draft: ${{ inputs.draft }}
+        prerelease: ${{ contains(steps.get_version.outputs.version, '-') }}
+        files: |
+          dist/*
+        token: ${{ inputs.token }}
+
+    - name: Summary
+      if: success()
+      shell: bash
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        echo "## 🎉 Go Release Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### ✅ Successfully Released v$VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Artifacts:**" >> $GITHUB_STEP_SUMMARY
+        for file in dist/*; do
+          echo "- \`$(basename $file)\`" >> $GITHUB_STEP_SUMMARY
+        done
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
+        echo "- [📋 View Release](https://github.com/${{ github.repository }}/releases/tag/${{ steps.get_version.outputs.tag }})" >> $GITHUB_STEP_SUMMARY
