@@ -28,15 +28,19 @@ runs:
           echo "❌ composer.json not found!"
           exit 1
         fi
-        
-        VERSION=$(jq -r '.["package-version"] // empty' composer.json)
-        
+
+        VERSION=$(jq -r '.version // empty' composer.json)
+
+        if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+          VERSION=$(jq -r '.["package-version"] // empty' composer.json)
+        fi
+
         if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
           echo "❌ No package version found in composer.json!"
-          echo "Please add a 'package-version' field to your composer.json file."
+          echo "Please add a 'version' or 'package-version' field to your composer.json file."
           exit 1
         fi
-        
+
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "✅ Found version: $VERSION"
       shell: bash
