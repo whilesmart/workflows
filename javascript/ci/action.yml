@@ -1,0 +1,139 @@
+name: 'JavaScript CI'
+description: 'Run lint, tests, optional typecheck and build for Node.js/npm projects'
+
+inputs:
+  token:
+    description: 'GitHub token for authentication'
+    required: true
+  node_version:
+    description: 'Node.js version to use'
+    required: false
+    default: 'lts/*'
+  working_directory:
+    description: 'Directory containing package.json (relative to repository root)'
+    required: false
+    default: '.'
+  lint_script:
+    description: 'NPM script name to run for linting'
+    required: false
+    default: 'lint'
+  run_tests:
+    description: 'Whether to run the test script (test or test:ci)'
+    required: false
+    default: 'true'
+  run_typecheck:
+    description: 'Whether to run the typecheck script (optional for non-TS projects)'
+    required: false
+    default: 'false'
+  run_build:
+    description: 'Whether to run the build script'
+    required: false
+    default: 'false'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ inputs.token }}
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+        cache: 'npm'
+        cache-dependency-path: ${{ inputs.working_directory }}/package-lock.json
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if [ ! -f "package.json" ]; then
+          echo "❌ package.json not found in $PWD"
+          exit 1
+        fi
+
+        if [ -f "package-lock.json" ]; then
+          echo "📦 Using npm ci"
+          npm ci
+        else
+          echo "📦 Using npm install"
+          npm install
+        fi
+
+    - name: Run lint
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if [ ! -f "package.json" ]; then
+          echo "❌ package.json not found in $PWD"
+          exit 1
+        fi
+
+        if jq -e ".scripts[\"${{ inputs.lint_script }}\"]" package.json >/dev/null; then
+          echo "🔎 Running npm run ${{ inputs.lint_script }}..."
+          npm run ${{ inputs.lint_script }}
+        else
+          echo "❌ No \"${{ inputs.lint_script }}\" script defined in package.json"
+          echo "   Please add it or override the lint_script input."
+          exit 1
+        fi
+
+    - name: Run typecheck
+      if: ${{ inputs.run_typecheck == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if jq -e '.scripts["typecheck"]' package.json >/dev/null; then
+          echo "🔡 Running npm run typecheck..."
+          npm run typecheck
+        else
+          echo "⚠️ No \"typecheck\" script defined; skipping."
+        fi
+
+    - name: Run tests
+      if: ${{ inputs.run_tests == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if [ ! -f "package.json" ]; then
+          echo "❌ package.json not found in $PWD"
+          exit 1
+        fi
+
+        TEST_SCRIPT=""
+        if jq -e '.scripts["test:ci"]' package.json >/dev/null; then
+          TEST_SCRIPT="test:ci"
+        elif jq -e '.scripts["test"]' package.json >/dev/null; then
+          TEST_SCRIPT="test"
+        else
+          echo "❌ No \"test\" or \"test:ci\" script defined in package.json"
+          echo "   Please define one of them to use the JavaScript CI action."
+          exit 1
+        fi
+
+        echo "🧪 Running npm run $TEST_SCRIPT..."
+        npm run "$TEST_SCRIPT"
+
+    - name: Run build
+      if: ${{ inputs.run_build == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if jq -e '.scripts["build"]' package.json >/dev/null; then
+          echo "🏗️ Running npm run build..."
+          npm run build
+        else
+          echo "⚠️ No \"build\" script defined; skipping."
+        fi
+
+    - name: Summary
+      if: success()
+      shell: bash
+      run: |
+        echo "## ✅ JavaScript CI Summary" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "- Node.js version: \`${{ inputs.node_version }}\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "- Working directory: \`${{ inputs.working_directory }}\`" >> "$GITHUB_STEP_SUMMARY"
