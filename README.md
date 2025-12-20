@@ -12,8 +12,8 @@ workflows/
 │   ├── pre-release/      # Pre-release validation
 │   └── release/          # Create PHP package release
 ├── javascript/
-│   ├── ci/               # Lint, test, typecheck, build for Node.js/npm libs
-│   └── release/          # Conventional-commit-driven npm release
+│   ├── ci/               # Lint, optional tests, typecheck, build for Node.js/npm libs
+│   └── release/          # Publish npm package and create GitHub release
 ├── package/              # [DEPRECATED] Use php/ instead
 │   ├── pre-release/
 │   └── release/
@@ -204,7 +204,7 @@ jobs:
 
 ### CI (`javascript/ci`)
 
-Runs lint, tests, optional typecheck, and optional build for Node.js/npm libraries.
+Runs lint, optional tests, and mandatory typecheck and build for Node.js/npm libraries.
 
 **Usage:**
 
@@ -245,12 +245,13 @@ jobs:
 
 ### Release (`javascript/release`)
 
-Creates a new npm release for Node.js libraries based on conventional commits.
+Publishes a new npm release for Node.js libraries based on the `version` in `package.json`.
 
 **Features:**
-- Determines `patch`/`minor`/`major` bump from commit history.
-- Updates `package.json` version and prepends an entry to `CHANGELOG.md`.
-- Commits changes, creates a `vX.Y.Z` tag, publishes to npm, and creates a GitHub Release.
+- Reads the version from `package.json`.
+- Optionally includes release notes from `CHANGELOG.md` (if a matching version entry exists).
+- Creates and pushes a `vX.Y.Z` tag.
+- Publishes to npm and creates a GitHub Release.
 - Supports `dry_run` mode and custom npm `dist-tag` (e.g., `latest`, `next`, `beta`).
 
 **Usage (release from main):**
@@ -306,8 +307,8 @@ jobs:
 **Requirements:**
 
 1. `package.json` with a valid `version` field.
-2. Conventional commits used on the release branch (`feat`, `fix`, `BREAKING CHANGE`, etc.).
-3. `CHANGELOG.md` (optional but recommended; it will be created or prepended to if present).
+2. `build` script in `package.json` (mandatory; can be a no-op if your project does not need a build step).
+3. `CHANGELOG.md` (optional but recommended; if present, include an entry like `## [X.Y.Z] - YYYY-MM-DD` for the version).
 4. `NPM_TOKEN` secret configured with publish permissions for the target npm registry.
 
 ---

@@ -1,5 +1,5 @@
 name: 'JavaScript CI'
-description: 'Run lint, tests, optional typecheck and build for Node.js/npm projects'
+description: 'Run lint, typecheck, optional tests, and build for Node.js/npm projects'
 
 inputs:
   token:
@@ -21,14 +21,6 @@ inputs:
     description: 'Whether to run the test script (test or test:ci)'
     required: false
     default: 'true'
-  run_typecheck:
-    description: 'Whether to run the typecheck script (optional for non-TS projects)'
-    required: false
-    default: 'false'
-  run_build:
-    description: 'Whether to run the build script'
-    required: false
-    default: 'false'
 
 runs:
   using: 'composite'
@@ -67,11 +59,6 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
-        if [ ! -f "package.json" ]; then
-          echo "❌ package.json not found in $PWD"
-          exit 1
-        fi
-
         if jq -e ".scripts[\"${{ inputs.lint_script }}\"]" package.json >/dev/null; then
           echo "🔎 Running npm run ${{ inputs.lint_script }}..."
           npm run ${{ inputs.lint_script }}
@@ -82,7 +69,6 @@ runs:
         fi
 
     - name: Run typecheck
-      if: ${{ inputs.run_typecheck == 'true' }}
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
@@ -90,7 +76,9 @@ runs:
           echo "🔡 Running npm run typecheck..."
           npm run typecheck
         else
-          echo "⚠️ No \"typecheck\" script defined; skipping."
+          echo "❌ No \"typecheck\" script defined in package.json"
+          echo "   Please add a typecheck script (it can be a no-op if you are not using TypeScript)."
+          exit 1
         fi
 
     - name: Run tests
@@ -98,11 +86,6 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
-        if [ ! -f "package.json" ]; then
-          echo "❌ package.json not found in $PWD"
-          exit 1
-        fi
-
         TEST_SCRIPT=""
         if jq -e '.scripts["test:ci"]' package.json >/dev/null; then
           TEST_SCRIPT="test:ci"
@@ -118,7 +101,6 @@ runs:
         npm run "$TEST_SCRIPT"
 
     - name: Run build
-      if: ${{ inputs.run_build == 'true' }}
       shell: bash
       working-directory: ${{ inputs.working_directory }}
       run: |
@@ -126,7 +108,9 @@ runs:
           echo "🏗️ Running npm run build..."
           npm run build
         else
-          echo "⚠️ No \"build\" script defined; skipping."
+          echo "❌ No \"build\" script defined in package.json"
+          echo "   Please add a build script (it can be a no-op if your project does not need a build step)."
+          exit 1
         fi
 
     - name: Summary
