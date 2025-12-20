@@ -12,7 +12,7 @@ workflows/
 │   ├── pre-release/      # Pre-release validation
 │   └── release/          # Create PHP package release
 ├── javascript/
-│   ├── ci/               # Lint, optional tests, typecheck, build for Node.js/npm libs
+│   ├── ci/               # Lint, typecheck, build, and optional tests for Node.js/npm libs
 │   └── release/          # Publish npm package and create GitHub release
 ├── package/              # [DEPRECATED] Use php/ instead
 │   ├── pre-release/
@@ -307,9 +307,13 @@ jobs:
 **Requirements:**
 
 1. `package.json` with a valid `version` field.
-2. `build` script in `package.json` (mandatory; can be a no-op if your project does not need a build step).
-3. `CHANGELOG.md` (optional but recommended; if present, include an entry like `## [X.Y.Z] - YYYY-MM-DD` for the version).
-4. `NPM_TOKEN` secret configured with publish permissions for the target npm registry.
+2. The following npm scripts in `package.json` (all mandatory):
+   - `lint` (or override via `lint_script` input)
+   - `typecheck` (can be a no-op if not using TypeScript)
+   - `build` (can be a no-op if no build step is needed)
+3. `test` or `test:ci` script (optional, controlled by `run_tests` input)
+4. `CHANGELOG.md` (optional but recommended; if present, include an entry like `## [X.Y.Z] - YYYY-MM-DD` for the version).
+5. `NPM_TOKEN` secret configured with publish permissions for the target npm registry.
 
 ---
 
