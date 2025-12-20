@@ -11,6 +11,9 @@ workflows/
 ├── php/
 │   ├── pre-release/      # Pre-release validation
 │   └── release/          # Create PHP package release
+├── javascript/
+│   ├── ci/               # Lint, typecheck, build, and optional tests for Node.js/npm libs
+│   └── release/          # Publish npm package and create GitHub release
 ├── package/              # [DEPRECATED] Use php/ instead
 │   ├── pre-release/
 │   └── release/
@@ -194,6 +197,123 @@ jobs:
    ### Added
    - Initial release
    ```
+
+---
+
+## JavaScript / Node.js Workflows
+
+### CI (`javascript/ci`)
+
+Runs lint, optional tests, and mandatory typecheck and build for Node.js/npm libraries.
+
+**Usage:**
+
+```yaml
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: JavaScript CI
+        uses: whilesmart/workflows/javascript/ci@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          # Optional overrides:
+          # node_version: '20.x'
+          # working_directory: '.'
+          # lint_script: 'lint'
+          # run_tests: 'true'
+```
+
+**Requirements:**
+
+1. `package.json` in the working directory.
+2. NPM scripts:
+   - `lint` (or the script name passed via `lint_script`).
+   - `typecheck` (mandatory; can be a no-op if you are not using TypeScript).
+   - `build` (mandatory; used to validate that the library can be built).
+   - `test` or `test:ci` (required when `run_tests` is set to `'true'`, which is the default).
+
+---
+
+### Release (`javascript/release`)
+
+Publishes a new npm release for Node.js libraries based on the `version` in `package.json`.
+
+**Features:**
+- Reads the version from `package.json`.
+- Optionally includes release notes from `CHANGELOG.md` (if a matching version entry exists).
+- Creates and pushes a `vX.Y.Z` tag.
+- Publishes to npm and creates a GitHub Release.
+- Supports `dry_run` mode and custom npm `dist-tag` (e.g., `latest`, `next`, `beta`).
+
+**Usage (release from main):**
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: JavaScript Release
+        uses: whilesmart/workflows/javascript/release@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          npm_token: ${{ secrets.NPM_TOKEN }}
+          # Optional overrides:
+          # node_version: '20.x'
+          # working_directory: '.'
+          # release_branch: 'main'
+          # npm_registry: 'https://registry.npmjs.org/'
+          # dist_tag: 'latest'
+          # dry_run: 'false'
+```
+
+**Optional: pre-release / next channel**
+
+```yaml
+on:
+  push:
+    branches: [next]
+
+jobs:
+  release-next:
+    runs-on: ubuntu-latest
+    steps:
+      - name: JavaScript Release (next)
+        uses: whilesmart/workflows/javascript/release@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          npm_token: ${{ secrets.NPM_TOKEN }}
+          release_branch: 'next'
+          dist_tag: 'next'
+```
+
+**Requirements:**
+
+1. `package.json` with a valid `version` field.
+2. The following npm scripts in `package.json` (all mandatory):
+   - `lint` (or override via `lint_script` input)
+   - `typecheck` (can be a no-op if not using TypeScript)
+   - `build` (can be a no-op if no build step is needed)
+3. `test` or `test:ci` script (optional, controlled by `run_tests` input)
+4. `CHANGELOG.md` (optional but recommended; if present, include an entry like `## [X.Y.Z] - YYYY-MM-DD` for the version).
+5. `NPM_TOKEN` secret configured with publish permissions for the target npm registry.
 
 ---
 

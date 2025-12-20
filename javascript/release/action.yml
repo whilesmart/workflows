@@ -1,0 +1,235 @@
+name: 'JavaScript Release'
+description: 'Publish npm package and create a GitHub release based on package.json version'
+
+inputs:
+  token:
+    description: 'GitHub token for authentication (used for checkout, pushing tags, and creating releases)'
+    required: true
+  npm_token:
+    description: 'NPM auth token for publishing to the registry'
+    required: true
+  node_version:
+    description: 'Node.js version to use'
+    required: false
+    default: 'lts/*'
+  working_directory:
+    description: 'Directory containing package.json (relative to repository root)'
+    required: false
+    default: '.'
+  release_branch:
+    description: 'Branch from which releases are allowed (e.g., main, next)'
+    required: false
+    default: 'main'
+  npm_registry:
+    description: 'NPM registry URL'
+    required: false
+    default: 'https://registry.npmjs.org/'
+  dist_tag:
+    description: 'npm dist-tag to publish under (e.g., latest, next, beta)'
+    required: false
+    default: 'latest'
+  dry_run:
+    description: 'If true, do not tag, publish, or create a GitHub Release'
+    required: false
+    default: 'false'
+
+outputs:
+  version:
+    description: 'The version being released (from package.json)'
+    value: ${{ steps.get_version.outputs.version }}
+  tag:
+    description: 'The git tag for the release'
+    value: ${{ steps.get_version.outputs.tag }}
+  release_url:
+    description: 'URL of the created GitHub release (if any)'
+    value: ${{ steps.create_release.outputs.url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ inputs.token }}
+
+    - name: Configure Git
+      shell: bash
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: Ensure running on release branch
+      shell: bash
+      run: |
+        CURRENT_REF="${GITHUB_REF#refs/heads/}"
+        if [ "$CURRENT_REF" != "${{ inputs.release_branch }}" ]; then
+          echo "❌ JavaScript Release can only run on branch '${{ inputs.release_branch }}' (current: '$CURRENT_REF')"
+          exit 1
+        fi
+
+    - name: Extract version from package.json
+      id: get_version
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        if [ ! -f "package.json" ]; then
+          echo "❌ package.json not found in $PWD"
+          exit 1
+        fi
+
+        VERSION=$(jq -r '.version // empty' package.json)
+
+        if [ -z "$VERSION" ]; then
+          echo "❌ No version found in package.json"
+          echo "   Please set package.json \"version\" before releasing."
+          exit 1
+        fi
+
+        if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+          echo "❌ Invalid semver format: $VERSION"
+          exit 1
+        fi
+
+        TAG="v$VERSION"
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tag=$TAG" >> $GITHUB_OUTPUT
+        echo "✅ Found version: $VERSION"
+
+    - name: Extract changelog (optional)
+      id: get_changelog
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+
+        if [ ! -f "CHANGELOG.md" ]; then
+          echo "ℹ️ No CHANGELOG.md found, skipping release notes extraction"
+          echo "release_notes=Release $VERSION" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        TEMP_FILE=$(mktemp)
+
+        awk -v version="$VERSION" '
+        BEGIN { found=0; printing=0 }
+        /^## \[/ {
+          if (found && printing) exit
+          if ($0 ~ "\\[" version "\\]") {
+            found=1
+            printing=1
+            next
+          }
+        }
+        found && printing && /^## \[/ { exit }
+        found && printing { print }
+        ' CHANGELOG.md > "$TEMP_FILE"
+
+        if [ ! -s "$TEMP_FILE" ]; then
+          echo "ℹ️ No changelog entry for version $VERSION"
+          echo "release_notes=Release $VERSION" >> $GITHUB_OUTPUT
+        else
+          {
+            echo 'release_notes<<EOF'
+            cat "$TEMP_FILE"
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+          echo "✅ Found changelog entry for version $VERSION"
+        fi
+
+        rm "$TEMP_FILE"
+
+    - name: Check if tag already exists
+      shell: bash
+      run: |
+        TAG="${{ steps.get_version.outputs.tag }}"
+        if git rev-parse "$TAG" >/dev/null 2>&1; then
+          echo "❌ Tag $TAG already exists!"
+          exit 1
+        fi
+        echo "✅ Tag $TAG does not exist, proceeding..."
+
+    - name: Set up Node.js
+      if: ${{ inputs.dry_run == 'false' }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+        registry-url: ${{ inputs.npm_registry }}
+
+    - name: Create and push tag
+      if: ${{ inputs.dry_run == 'false' }}
+      shell: bash
+      run: |
+        TAG="${{ steps.get_version.outputs.tag }}"
+
+        git tag -a "$TAG" -m "Release $TAG"
+        echo "✅ Created tag $TAG"
+
+        git push origin "$TAG"
+        echo "✅ Pushed tag to origin"
+
+    - name: Build and publish to npm
+      if: ${{ inputs.dry_run == 'false' }}
+      shell: bash
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.npm_token }}
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        echo "📦 Installing dependencies before publish..."
+        if [ -f "package-lock.json" ]; then
+          npm ci
+        else
+          npm install
+        fi
+
+        if jq -e '.scripts["build"]' package.json >/dev/null; then
+          echo "🏗️ Running npm run build before publish..."
+          npm run build
+        else
+          echo "❌ No \"build\" script defined in package.json"
+          echo "   Please add a build script (it can be a no-op if your project does not need a build step)."
+          exit 1
+        fi
+
+        echo "🚀 Publishing package to npm with dist-tag '${{ inputs.dist_tag }}'..."
+        npm publish --tag "${{ inputs.dist_tag }}" --registry "${{ inputs.npm_registry }}"
+
+    - name: Create GitHub Release
+      if: ${{ inputs.dry_run == 'false' }}
+      id: create_release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.get_version.outputs.tag }}
+        name: Release ${{ steps.get_version.outputs.tag }}
+        body: |
+          ## Release Notes
+
+          ${{ steps.get_changelog.outputs.release_notes }}
+        draft: false
+        prerelease: ${{ contains(steps.get_version.outputs.version, '-') }}
+        token: ${{ inputs.token }}
+
+    - name: Dry-run summary (no publish)
+      if: ${{ inputs.dry_run == 'true' }}
+      shell: bash
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        TAG="${{ steps.get_version.outputs.tag }}"
+        echo "## 🚧 JavaScript Release (dry-run)" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "- Version: \`$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "- Tag: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "- No tags, npm publish, or GitHub Release were performed because dry_run=true" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Release summary
+      if: ${{ inputs.dry_run == 'false' }}
+      shell: bash
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        TAG="${{ steps.get_version.outputs.tag }}"
+        echo "## 🎉 JavaScript Release Summary" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "- Released version: \`$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "- Git tag: \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "- npm dist-tag: \`${{ inputs.dist_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+        echo "- Branch: \`${{ inputs.release_branch }}\`" >> "$GITHUB_STEP_SUMMARY"
