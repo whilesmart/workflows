@@ -1,5 +1,5 @@
 name: 'Create Release'
-description: 'Extracts version and changelog, builds, creates a release branch, tag, and draft release.'
+description: 'Extracts version and changelog, builds, creates a release branch, tag, and draft release for JS projects.'
 
 inputs:
   token:
@@ -9,22 +9,22 @@ inputs:
     description: 'The name of the package to release'
     required: true
   build_command:
-    description: 'Build command to run (e.g., npm run build for assets). If not provided, no build runs.'
+    description: 'Build command to run (e.g., npm run build). If not provided, auto-detects build script in package.json.'
     required: false
-  php_version:
-    description: 'PHP version to use'
+  node_version:
+    description: 'Node.js version to use'
     required: false
-    default: '8.2'
-  install_dependencies:
-    description: 'Run composer install --no-dev --optimize-autoloader (for apps, not packages)'
+    default: '20'
+  skip_build:
+    description: 'Skip the build step entirely'
     required: false
     default: 'false'
   release_type:
-    description: 'Type of release: package (composer installable) or app (standalone application)'
+    description: 'Type of release: package (npm installable) or app (standalone application)'
     required: false
     default: 'package'
   create_archive:
-    description: 'Create a deployable zip archive (for apps). Includes vendor, excludes dev files.'
+    description: 'Create a deployable zip archive (for apps). Excludes dev files.'
     required: false
     default: 'false'
   exclude_patterns:
@@ -46,45 +46,39 @@ runs:
         token: ${{ inputs.token }}
 
     - name: Configure Git
+      shell: bash
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-      shell: bash
 
-    - name: Setup PHP
-      if: inputs.install_dependencies == 'true' || inputs.build_command != ''
-      uses: shivammathur/setup-php@v2
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
       with:
-        php-version: ${{ inputs.php_version }}
-        extensions: mbstring, xml, ctype, json
-        tools: composer:v2
+        node-version: ${{ inputs.node_version }}
 
-    - name: Extract version from composer.json
+    - name: Extract version from package.json
       id: get_version
+      shell: bash
       run: |
-        if [ ! -f "composer.json" ]; then
-          echo "::error::composer.json not found!"
+        if [ ! -f "package.json" ]; then
+          echo "::error::package.json not found!"
           exit 1
         fi
 
-        VERSION=$(jq -r '.version // empty' composer.json)
+        VERSION=$(jq -r '.version // empty' package.json)
 
         if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
-          VERSION=$(jq -r '.["package-version"] // empty' composer.json)
-        fi
-
-        if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
-          echo "::error::No package version found in composer.json!"
-          echo "Please add a 'version' or 'package-version' field to your composer.json file."
+          echo "::error::No version found in package.json!"
+          echo "Please add a 'version' field to your package.json file."
           exit 1
         fi
 
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Found version: $VERSION"
-      shell: bash
 
     - name: Extract release notes from CHANGELOG.md
       id: get_changelog
+      shell: bash
       run: |
         if [ ! -f "CHANGELOG.md" ]; then
           echo "::error::CHANGELOG.md not found!"
@@ -122,10 +116,10 @@ runs:
 
         rm "$TEMP_FILE"
         echo "Found changelog entry for version $VERSION"
-      shell: bash
 
     - name: Check if tag already exists
       id: check_tag
+      shell: bash
       run: |
         VERSION="${{ steps.get_version.outputs.version }}"
         if git rev-parse "v$VERSION" >/dev/null 2>&1; then
@@ -133,21 +127,40 @@ runs:
           exit 1
         fi
         echo "Tag v$VERSION does not exist, proceeding..."
-      shell: bash
 
-    - name: Install composer dependencies
-      if: inputs.install_dependencies == 'true'
+    - name: Install dependencies
       shell: bash
       run: |
-        composer install --no-dev --optimize-autoloader --no-interaction
-        echo "Composer dependencies installed (production)"
+        if [ -f "package-lock.json" ]; then
+          npm ci
+        elif [ -f "yarn.lock" ]; then
+          yarn install --frozen-lockfile
+        elif [ -f "pnpm-lock.yaml" ]; then
+          npm install -g pnpm
+          pnpm install --frozen-lockfile
+        else
+          npm install
+        fi
+        echo "Dependencies installed"
 
-    - name: Run build command
-      if: inputs.build_command != ''
+    - name: Detect and run build
+      if: inputs.skip_build != 'true'
       shell: bash
       run: |
-        echo "Running build command: ${{ inputs.build_command }}"
-        eval "${{ inputs.build_command }}"
+        BUILD_CMD="${{ inputs.build_command }}"
+
+        if [ -n "$BUILD_CMD" ]; then
+          echo "Running provided build command: $BUILD_CMD"
+          eval "$BUILD_CMD"
+        else
+          HAS_BUILD=$(jq -r '.scripts.build // empty' package.json)
+          if [ -n "$HAS_BUILD" ]; then
+            echo "Auto-detected build script, running: npm run build"
+            npm run build
+          else
+            echo "No build script found, skipping build step"
+          fi
+        fi
 
     - name: Create release archive
       if: inputs.create_archive == 'true'
@@ -170,28 +183,26 @@ runs:
         .env.*
         !.env.example
         tests/*
-        Tests/*
         test/*
+        __tests__/*
         spec/*
-        phpunit.xml
-        phpunit.xml.dist
-        phpstan.neon
-        phpstan.neon.dist
-        .php-cs-fixer.php
-        .php-cs-fixer.dist.php
-        psalm.xml
-        infection.json
-        infection.json.dist
+        coverage/*
+        .nyc_output/*
+        jest.config.*
+        vitest.config.*
+        cypress/*
+        cypress.config.*
+        playwright.config.*
+        .eslintrc*
+        .prettierrc*
+        .stylelintrc*
+        tsconfig*.json
         Makefile
         docker-compose*.yml
         Dockerfile
         .dockerignore
         .travis.yml
-        .scrutinizer.yml
-        .styleci.yml
-        appveyor.yml
         .gitlab-ci.yml
-        bitbucket-pipelines.yml
         .circleci/*
         .idea/*
         .vscode/*
@@ -199,8 +210,7 @@ runs:
         node_modules/*
         .npm/*
         .yarn/*
-        coverage/*
-        .phpunit.result.cache
+        .pnpm-store/*
         .releaseignore
         DEFAULTS
 
@@ -223,6 +233,7 @@ runs:
         echo "Created archive: $ARCHIVE_NAME ($(du -h "$ARCHIVE_NAME" | cut -f1))"
 
     - name: Create release branch
+      shell: bash
       run: |
         VERSION="${{ steps.get_version.outputs.version }}"
         BRANCH_NAME="release-$VERSION"
@@ -234,16 +245,16 @@ runs:
 
         git checkout -b $BRANCH_NAME
         echo "Created release branch: $BRANCH_NAME"
-      shell: bash
 
     - name: Create and push tag
+      shell: bash
       run: |
         VERSION="${{ steps.get_version.outputs.version }}"
         git tag -a "v$VERSION" -m "Release $VERSION"
         echo "Created tag v$VERSION"
-      shell: bash
 
     - name: Push changes and tags
+      shell: bash
       run: |
         VERSION="${{ steps.get_version.outputs.version }}"
 
@@ -252,7 +263,6 @@ runs:
 
         git push origin "v$VERSION"
         echo "Pushed tag"
-      shell: bash
 
     - name: Create GitHub Release (Package)
       if: inputs.release_type == 'package'
@@ -273,7 +283,7 @@ runs:
           ## Installation
 
           ```bash
-          composer require ${{ inputs.package }}
+          npm install ${{ inputs.package }}
           ```
 
           ## Documentation
@@ -329,6 +339,7 @@ runs:
 
     - name: Summary
       if: success()
+      shell: bash
       run: |
         VERSION="${{ steps.get_version.outputs.version }}"
         echo "## Release Creation Summary" >> $GITHUB_STEP_SUMMARY
@@ -336,14 +347,9 @@ runs:
         echo "### Successfully Created Release v$VERSION" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**What was done:**" >> $GITHUB_STEP_SUMMARY
-        echo "- Extracted version from \`composer.json\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Extracted version from \`package.json\`" >> $GITHUB_STEP_SUMMARY
         echo "- Extracted release notes from \`CHANGELOG.md\`" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ inputs.install_dependencies }}" == "true" ]; then
-          echo "- Installed production dependencies" >> $GITHUB_STEP_SUMMARY
-        fi
-        if [ -n "${{ inputs.build_command }}" ]; then
-          echo "- Ran build command" >> $GITHUB_STEP_SUMMARY
-        fi
+        echo "- Installed dependencies and ran build" >> $GITHUB_STEP_SUMMARY
         if [ "${{ inputs.create_archive }}" == "true" ]; then
           echo "- Created deployable archive: \`${{ steps.create_archive.outputs.archive_name }}\`" >> $GITHUB_STEP_SUMMARY
         fi
@@ -355,4 +361,3 @@ runs:
         echo "- [View Release](https://github.com/${{ github.repository }}/releases/tag/v$VERSION)" >> $GITHUB_STEP_SUMMARY
         echo "- [View Changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)" >> $GITHUB_STEP_SUMMARY
         echo "- [View Pull Requests](https://github.com/${{ github.repository }}/pulls)" >> $GITHUB_STEP_SUMMARY
-      shell: bash

@@ -7,18 +7,22 @@ A collection of reusable GitHub Actions organized by language/platform.
 ```
 workflows/
 ├── go/
-│   └── release/          # Build & release Go binaries
+│   └── release/              # Build & release Go binaries
+├── js/
+│   ├── pre-release/          # Pre-release validation for JS projects
+│   └── release/              # Create JS/Node package or app release
 ├── php/
-│   ├── pre-release/      # Pre-release validation
-│   └── release/          # Create PHP package release
-├── package/              # [DEPRECATED] Use php/ instead
+│   ├── pre-release/          # Pre-release validation
+│   ├── release/              # Create PHP package or app release
+│   └── laravel/
+│       └── release/          # Laravel-specific release with vendor
+├── package/                  # [DEPRECATED] Use php/ instead
 │   ├── pre-release/
 │   └── release/
 └── README.md
 ```
 
 > **Note:** The `package/` path is deprecated. Migrate to `php/` when convenient.
-> Both paths will continue to work, but new features will only be added to `php/`.
 
 ---
 
@@ -111,6 +115,141 @@ Available platforms: `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64
 
 ---
 
+## JS Workflows
+
+### Pre-Release Checks (`js/pre-release`)
+
+Validates project readiness before creating a release for JavaScript/Node.js projects.
+
+**Checks:**
+- Valid version in `package.json`
+- Changelog entry exists for the version
+- Version tag doesn't already exist
+
+**Usage:**
+
+```yaml
+name: Pre-Release Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  pre-release-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Pre-Release Checks
+        uses: whilesmart/workflows/js/pre-release@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### Release (`js/release`)
+
+Creates a release for JavaScript/Node.js projects (packages or standalone apps).
+
+**Features:**
+- Extracts version from `package.json`
+- Parses release notes from `CHANGELOG.md`
+- Auto-detects package manager (npm, yarn, pnpm)
+- Auto-detects and runs build script (or use custom build command)
+- Optional: Create deployable archive (excludes dev files)
+- Creates release branch and tag
+- Creates draft GitHub release
+
+**Usage (npm package):**
+
+```yaml
+name: Create Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Release
+        uses: whilesmart/workflows/js/release@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          package: your-package-name
+```
+
+**Usage (standalone app with archive):**
+
+```yaml
+- name: Create Release
+  uses: whilesmart/workflows/js/release@main
+  with:
+    token: ${{ secrets.GITHUB_TOKEN }}
+    package: your-app-name
+    release_type: app
+    create_archive: 'true'
+    build_command: npm run build:prod
+    deploy_instructions: |
+      Download the attached archive and extract to your server.
+
+      ```bash
+      unzip your-app-v1.0.0.zip -d /var/www/your-app
+      cd /var/www/your-app
+      npm install --production
+      npm start
+      ```
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `token` | Yes | - | GitHub token for authentication |
+| `package` | Yes | - | Package/app name |
+| `build_command` | No | - | Custom build command. Auto-detects `build` script if not provided |
+| `node_version` | No | `20` | Node.js version to use |
+| `skip_build` | No | `false` | Skip the build step entirely |
+| `release_type` | No | `package` | `package` (npm install instructions) or `app` (deployment instructions) |
+| `create_archive` | No | `false` | Create deployable zip archive (for apps) |
+| `exclude_patterns` | No | - | Additional patterns to exclude from archive |
+| `deploy_instructions` | No | - | Custom deployment instructions for release notes |
+
+**Archive Exclusions:**
+
+When `create_archive: 'true'`, these are excluded by default:
+- `.git/`, `.github/`, IDE files
+- `tests/`, `__tests__/`, coverage files
+- `node_modules/`
+- CI/CD configs, Docker files
+
+Source files are **included** by default. Use `.releaseignore` or `exclude_patterns` to exclude specific directories if needed.
+
+**Requirements:**
+
+1. `package.json` with `version` field:
+   ```json
+   {
+     "name": "your-package",
+     "version": "1.0.0"
+   }
+   ```
+
+2. `CHANGELOG.md` with version entries:
+   ```markdown
+   ## [1.0.0] - 2025-01-15
+
+   ### Added
+   - Initial release
+   ```
+
+---
+
 ## PHP Workflows
 
 ### Pre-Release Checks (`php/pre-release`)
@@ -145,15 +284,18 @@ jobs:
 
 ### Release (`php/release`)
 
-Creates a release for PHP/Composer packages.
+Creates a release for PHP/Composer packages or standalone applications.
 
 **Features:**
 - Extracts version from `composer.json`
 - Parses release notes from `CHANGELOG.md`
+- Optional: Install production dependencies
+- Optional: Run custom build commands
+- Optional: Create deployable archive (excludes dev files)
 - Creates release branch and tag
 - Creates draft GitHub release
 
-**Usage:**
+**Usage (composer package):**
 
 ```yaml
 name: Create Release
@@ -177,13 +319,103 @@ jobs:
           package: your-vendor/your-package
 ```
 
+**Usage (PHP app with vendor and archive):**
+
+```yaml
+- name: Create Release
+  uses: whilesmart/workflows/php/release@main
+  with:
+    token: ${{ secrets.GITHUB_TOKEN }}
+    package: your-app-name
+    release_type: app
+    install_dependencies: 'true'
+    create_archive: 'true'
+    php_version: '8.2'
+    deploy_instructions: |
+      Download the attached archive and extract to your web server.
+
+      ```bash
+      unzip your-app-v1.0.0.zip -d /var/www/your-app
+      ```
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `token` | Yes | - | GitHub token for authentication |
+| `package` | Yes | - | Package/app name |
+| `build_command` | No | - | Custom build command (e.g., `npm run build` for assets) |
+| `php_version` | No | `8.2` | PHP version (only used when build features enabled) |
+| `install_dependencies` | No | `false` | Run `composer install --no-dev --optimize-autoloader` |
+| `release_type` | No | `package` | `package` (composer require) or `app` (deployment instructions) |
+| `create_archive` | No | `false` | Create deployable zip archive (for apps) |
+| `exclude_patterns` | No | - | Additional patterns to exclude from archive |
+| `deploy_instructions` | No | - | Custom deployment instructions for release notes |
+
+### Laravel Release (`php/laravel/release`)
+
+Creates a production-ready release specifically for Laravel applications.
+
+**Features:**
+- Extracts version from `composer.json`
+- Parses release notes from `CHANGELOG.md`
+- Installs production composer dependencies (no-dev)
+- Optional: Builds frontend assets (npm/yarn/pnpm)
+- Creates deployable archive with vendor (excludes dev files)
+- Laravel-specific exclusions (storage/logs, cache, etc.)
+- Laravel deployment instructions in release notes
+- Creates release branch, tag, and draft GitHub release
+
+**Usage:**
+
+```yaml
+name: Create Laravel Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Release
+        uses: whilesmart/workflows/php/laravel/release@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          package: your-app-name
+          build_command: npm run build
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `token` | Yes | - | GitHub token for authentication |
+| `package` | Yes | - | Application name |
+| `build_command` | No | - | Frontend build command (e.g., `npm run build`) |
+| `php_version` | No | `8.2` | PHP version to use |
+| `node_version` | No | `20` | Node.js version for asset compilation |
+| `exclude_patterns` | No | - | Additional patterns to exclude from archive |
+
+**Laravel-specific exclusions:**
+- Standard dev files (tests, CI configs, IDE files)
+- `storage/logs/*`, `storage/framework/cache/*`, `storage/framework/sessions/*`
+- `bootstrap/cache/*.php`
+- `node_modules/`
+
 **Requirements:**
 
-1. `composer.json` with `package-version` field:
+1. `composer.json` with `version` or `package-version` field:
    ```json
    {
-     "name": "your-vendor/your-package",
-     "package-version": "1.0.0"
+     "name": "your-vendor/your-app",
+     "version": "1.0.0"
    }
    ```
 
@@ -194,6 +426,42 @@ jobs:
    ### Added
    - Initial release
    ```
+
+---
+
+## Custom Exclusions
+
+All release workflows support custom file exclusions via:
+
+### `.releaseignore` file
+
+Create a `.releaseignore` file in your project root (same format as `.gitignore`):
+
+```
+# Custom exclusions
+docs/*
+examples/*
+*.md
+!README.md
+!CHANGELOG.md
+```
+
+### `exclude_patterns` input
+
+Pass additional patterns directly:
+
+```yaml
+- name: Create Release
+  uses: whilesmart/workflows/php/release@main
+  with:
+    token: ${{ secrets.GITHUB_TOKEN }}
+    package: your-app
+    create_archive: 'true'
+    exclude_patterns: |
+      docs/*
+      examples/*
+      *.md
+```
 
 ---
 
