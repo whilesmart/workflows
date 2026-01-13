@@ -1,0 +1,363 @@
+name: 'Create Release'
+description: 'Extracts version and changelog, builds, creates a release branch, tag, and draft release for JS projects.'
+
+inputs:
+  token:
+    description: 'The GitHub token for authentication.'
+    required: true
+  package:
+    description: 'The name of the package to release'
+    required: true
+  build_command:
+    description: 'Build command to run (e.g., npm run build). If not provided, auto-detects build script in package.json.'
+    required: false
+  node_version:
+    description: 'Node.js version to use'
+    required: false
+    default: '20'
+  skip_build:
+    description: 'Skip the build step entirely'
+    required: false
+    default: 'false'
+  release_type:
+    description: 'Type of release: package (npm installable) or app (standalone application)'
+    required: false
+    default: 'package'
+  create_archive:
+    description: 'Create a deployable zip archive (for apps). Excludes dev files.'
+    required: false
+    default: 'false'
+  exclude_patterns:
+    description: 'Additional patterns to exclude from archive (newline or space separated). Uses .releaseignore if present.'
+    required: false
+    default: ''
+  deploy_instructions:
+    description: 'Custom deployment instructions to include in release notes (for apps).'
+    required: false
+    default: ''
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ inputs.token }}
+
+    - name: Configure Git
+      shell: bash
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+
+    - name: Extract version from package.json
+      id: get_version
+      shell: bash
+      run: |
+        if [ ! -f "package.json" ]; then
+          echo "::error::package.json not found!"
+          exit 1
+        fi
+
+        VERSION=$(jq -r '.version // empty' package.json)
+
+        if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+          echo "::error::No version found in package.json!"
+          echo "Please add a 'version' field to your package.json file."
+          exit 1
+        fi
+
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Found version: $VERSION"
+
+    - name: Extract release notes from CHANGELOG.md
+      id: get_changelog
+      shell: bash
+      run: |
+        if [ ! -f "CHANGELOG.md" ]; then
+          echo "::error::CHANGELOG.md not found!"
+          exit 1
+        fi
+
+        VERSION="${{ steps.get_version.outputs.version }}"
+        TEMP_FILE=$(mktemp)
+
+        awk -v version="$VERSION" '
+        BEGIN { found=0; printing=0 }
+        /^## \[/ {
+          if (found && printing) exit
+          if ($0 ~ "\\[" version "\\]") {
+            found=1
+            printing=1
+            next
+          }
+        }
+        found && printing && /^## \[/ { exit }
+        found && printing { print }
+        ' CHANGELOG.md > "$TEMP_FILE"
+
+        if [ ! -s "$TEMP_FILE" ]; then
+          echo "::error::No changelog entry found for version $VERSION!"
+          rm "$TEMP_FILE"
+          exit 1
+        fi
+
+        {
+          echo 'release_notes<<EOF'
+          cat "$TEMP_FILE"
+          echo 'EOF'
+        } >> $GITHUB_OUTPUT
+
+        rm "$TEMP_FILE"
+        echo "Found changelog entry for version $VERSION"
+
+    - name: Check if tag already exists
+      id: check_tag
+      shell: bash
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+          echo "::error::Tag v$VERSION already exists!"
+          exit 1
+        fi
+        echo "Tag v$VERSION does not exist, proceeding..."
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        if [ -f "package-lock.json" ]; then
+          npm ci
+        elif [ -f "yarn.lock" ]; then
+          yarn install --frozen-lockfile
+        elif [ -f "pnpm-lock.yaml" ]; then
+          npm install -g pnpm
+          pnpm install --frozen-lockfile
+        else
+          npm install
+        fi
+        echo "Dependencies installed"
+
+    - name: Detect and run build
+      if: inputs.skip_build != 'true'
+      shell: bash
+      run: |
+        BUILD_CMD="${{ inputs.build_command }}"
+
+        if [ -n "$BUILD_CMD" ]; then
+          echo "Running provided build command: $BUILD_CMD"
+          eval "$BUILD_CMD"
+        else
+          HAS_BUILD=$(jq -r '.scripts.build // empty' package.json)
+          if [ -n "$HAS_BUILD" ]; then
+            echo "Auto-detected build script, running: npm run build"
+            npm run build
+          else
+            echo "No build script found, skipping build step"
+          fi
+        fi
+
+    - name: Create release archive
+      if: inputs.create_archive == 'true'
+      id: create_archive
+      shell: bash
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        PACKAGE_NAME="${{ inputs.package }}"
+        ARCHIVE_NAME="${PACKAGE_NAME//\//-}-v${VERSION}.zip"
+
+        EXCLUDE_FILE=$(mktemp)
+
+        cat > "$EXCLUDE_FILE" << 'DEFAULTS'
+        .git/*
+        .github/*
+        .gitignore
+        .gitattributes
+        .editorconfig
+        .env
+        .env.*
+        !.env.example
+        tests/*
+        test/*
+        __tests__/*
+        spec/*
+        coverage/*
+        .nyc_output/*
+        jest.config.*
+        vitest.config.*
+        cypress/*
+        cypress.config.*
+        playwright.config.*
+        .eslintrc*
+        .prettierrc*
+        .stylelintrc*
+        tsconfig*.json
+        Makefile
+        docker-compose*.yml
+        Dockerfile
+        .dockerignore
+        .travis.yml
+        .gitlab-ci.yml
+        .circleci/*
+        .idea/*
+        .vscode/*
+        *.log
+        node_modules/*
+        .npm/*
+        .yarn/*
+        .pnpm-store/*
+        .releaseignore
+        DEFAULTS
+
+        if [ -f ".releaseignore" ]; then
+          echo "Found .releaseignore, adding custom exclusions"
+          cat ".releaseignore" >> "$EXCLUDE_FILE"
+        fi
+
+        EXTRA_PATTERNS="${{ inputs.exclude_patterns }}"
+        if [ -n "$EXTRA_PATTERNS" ]; then
+          echo "Adding extra exclusion patterns"
+          echo "$EXTRA_PATTERNS" | tr ' ' '\n' >> "$EXCLUDE_FILE"
+        fi
+
+        zip -r "$ARCHIVE_NAME" . -x@"$EXCLUDE_FILE"
+
+        rm "$EXCLUDE_FILE"
+
+        echo "archive_name=$ARCHIVE_NAME" >> $GITHUB_OUTPUT
+        echo "Created archive: $ARCHIVE_NAME ($(du -h "$ARCHIVE_NAME" | cut -f1))"
+
+    - name: Create release branch
+      shell: bash
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        BRANCH_NAME="release-$VERSION"
+
+        if git show-ref --verify --quiet refs/heads/$BRANCH_NAME; then
+          echo "::error::Branch $BRANCH_NAME already exists!"
+          exit 1
+        fi
+
+        git checkout -b $BRANCH_NAME
+        echo "Created release branch: $BRANCH_NAME"
+
+    - name: Create and push tag
+      shell: bash
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        git tag -a "v$VERSION" -m "Release $VERSION"
+        echo "Created tag v$VERSION"
+
+    - name: Push changes and tags
+      shell: bash
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+
+        git push origin "release-$VERSION"
+        echo "Pushed release branch"
+
+        git push origin "v$VERSION"
+        echo "Pushed tag"
+
+    - name: Create GitHub Release (Package)
+      if: inputs.release_type == 'package'
+      id: create_release_package
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+      with:
+        tag_name: v${{ steps.get_version.outputs.version }}
+        release_name: Release ${{ steps.get_version.outputs.version }}
+        body: |
+          ## Release Notes
+
+          ${{ steps.get_changelog.outputs.release_notes }}
+
+          ---
+
+          ## Installation
+
+          ```bash
+          npm install ${{ inputs.package }}
+          ```
+
+          ## Documentation
+
+          See the [README](README.md) for usage instructions.
+
+          ## Full Changelog
+
+          View the complete version history in [CHANGELOG.md](CHANGELOG.md).
+        draft: true
+        prerelease: false
+
+    - name: Create GitHub Release (App)
+      if: inputs.release_type == 'app'
+      id: create_release_app
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+      with:
+        tag_name: v${{ steps.get_version.outputs.version }}
+        release_name: Release ${{ steps.get_version.outputs.version }}
+        body: |
+          ## Release Notes
+
+          ${{ steps.get_changelog.outputs.release_notes }}
+
+          ---
+
+          ## Deployment
+
+          ${{ inputs.deploy_instructions }}
+
+          ## Documentation
+
+          See the [README](README.md) for usage instructions.
+
+          ## Full Changelog
+
+          View the complete version history in [CHANGELOG.md](CHANGELOG.md).
+        draft: true
+        prerelease: false
+
+    - name: Upload release archive
+      if: inputs.create_archive == 'true' && inputs.release_type == 'app'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ inputs.token }}
+      with:
+        upload_url: ${{ steps.create_release_app.outputs.upload_url }}
+        asset_path: ./${{ steps.create_archive.outputs.archive_name }}
+        asset_name: ${{ steps.create_archive.outputs.archive_name }}
+        asset_content_type: application/zip
+
+    - name: Summary
+      if: success()
+      shell: bash
+      run: |
+        VERSION="${{ steps.get_version.outputs.version }}"
+        echo "## Release Creation Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Successfully Created Release v$VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**What was done:**" >> $GITHUB_STEP_SUMMARY
+        echo "- Extracted version from \`package.json\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Extracted release notes from \`CHANGELOG.md\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Installed dependencies and ran build" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ inputs.create_archive }}" == "true" ]; then
+          echo "- Created deployable archive: \`${{ steps.create_archive.outputs.archive_name }}\`" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "- Created and pushed git tag \`v$VERSION\`" >> $GITHUB_STEP_SUMMARY
+        echo "- Created **DRAFT** GitHub release" >> $GITHUB_STEP_SUMMARY
+        echo "- Created release branch \`release-$VERSION\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Quick Links" >> $GITHUB_STEP_SUMMARY
+        echo "- [View Release](https://github.com/${{ github.repository }}/releases/tag/v$VERSION)" >> $GITHUB_STEP_SUMMARY
+        echo "- [View Changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)" >> $GITHUB_STEP_SUMMARY
+        echo "- [View Pull Requests](https://github.com/${{ github.repository }}/pulls)" >> $GITHUB_STEP_SUMMARY
