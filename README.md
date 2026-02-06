@@ -11,6 +11,9 @@ workflows/
 ├── js/
 │   ├── pre-release/          # Pre-release validation for JS projects
 │   └── release/              # Create JS/Node package or app release
+├── python/
+│   ├── pre-release/          # Pre-release validation for Python projects
+│   └── release/              # Create Python package or app release
 ├── php/
 │   ├── pre-release/          # Pre-release validation
 │   ├── release/              # Create PHP package or app release
@@ -417,6 +420,142 @@ jobs:
      "name": "your-vendor/your-app",
      "version": "1.0.0"
    }
+   ```
+
+2. `CHANGELOG.md` with version entries:
+   ```markdown
+   ## [1.0.0] - 2025-01-15
+
+   ### Added
+   - Initial release
+   ```
+
+---
+
+## Python Workflows
+
+### Pre-Release Checks (`python/pre-release`)
+
+Validates project readiness before creating a release for Python projects.
+
+**Checks:**
+- Valid semver version in `VERSION` file
+- Changelog entry exists for the version
+- Version tag doesn't already exist
+
+**Usage:**
+
+```yaml
+name: Pre-Release Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  pre-release-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Pre-Release Checks
+        uses: whilesmart/workflows/python/pre-release@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### Release (`python/release`)
+
+Creates a release for Python packages or standalone applications.
+
+**Features:**
+- Extracts version from `VERSION` file
+- Parses release notes from `CHANGELOG.md`
+- Optional: Install production dependencies
+- Optional: Run custom build commands
+- Optional: Create deployable archive (excludes dev files, `__pycache__`, `.pyc`, etc.)
+- Creates release branch and tag
+- Creates draft GitHub release
+
+**Usage (Python app):**
+
+```yaml
+name: Create Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create Release
+        uses: whilesmart/workflows/python/release@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          package: your-app-name
+          release_type: app
+```
+
+**Usage (pip package):**
+
+```yaml
+- name: Create Release
+  uses: whilesmart/workflows/python/release@main
+  with:
+    token: ${{ secrets.GITHUB_TOKEN }}
+    package: your-package-name
+    release_type: package
+    build_command: python -m build
+    python_version: '3.11'
+```
+
+**Usage (app with archive):**
+
+```yaml
+- name: Create Release
+  uses: whilesmart/workflows/python/release@main
+  with:
+    token: ${{ secrets.GITHUB_TOKEN }}
+    package: your-app-name
+    release_type: app
+    create_archive: 'true'
+    install_dependencies: 'true'
+    deploy_instructions: |
+      Download the attached archive and extract to your server.
+
+      ```bash
+      unzip your-app-v1.0.0.zip -d /opt/your-app
+      cd /opt/your-app
+      pip install -r requirements.txt
+      ```
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `token` | Yes | - | GitHub token for authentication |
+| `package` | Yes | - | Package/app name |
+| `build_command` | No | - | Custom build command (e.g., `python -m build`) |
+| `python_version` | No | `3.11` | Python version to use |
+| `install_dependencies` | No | `false` | Install production dependencies |
+| `requirements_file` | No | `requirements.txt` | Path to requirements file |
+| `release_type` | No | `app` | `package` (pip install instructions) or `app` (deployment instructions) |
+| `create_archive` | No | `false` | Create deployable zip archive (for apps) |
+| `exclude_patterns` | No | - | Additional patterns to exclude from archive |
+| `deploy_instructions` | No | - | Custom deployment instructions for release notes |
+
+**Requirements:**
+
+1. `VERSION` file with semver version:
+   ```
+   1.0.0
    ```
 
 2. `CHANGELOG.md` with version entries:
