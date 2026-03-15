@@ -1,0 +1,58 @@
+name: 'Check Code Coverage'
+description: 'Checks if the code coverage for this project meets project standards.'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure Git
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+      shell: bash
+
+    - name: Get coverage
+      id: coverage
+      run: |
+        COVERAGE=$(php .github/scripts/get_coverage.php)
+        echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
+
+      shell: bash
+    - name: Check coverage
+      run: php .github/scripts/check_coverage.php ${{ steps.coverage.outputs.coverage }}
+      shell: bash
+
+      # Optional: post comment only if PR is not from a fork
+    - name: Compute comment values
+      id: comment-values
+      if: github.event.pull_request.head.repo.full_name == github.repository
+      run: |
+        PR_COVERAGE=${{ steps.coverage.outputs.coverage }}
+        BASELINE=$(php -r "echo json_decode(file_get_contents('.github/coverage-baseline.json'), true)['coverage'] ?? 0;")
+        CHANGE=$(php -r "echo ($PR_COVERAGE-$BASELINE>=0?'+':'').round($PR_COVERAGE-$BASELINE,1).'%';")
+        echo "baseline=$BASELINE" >> $GITHUB_OUTPUT
+        echo "change=$CHANGE" >> $GITHUB_OUTPUT
+      shell: bash
+
+    - name: Find Coverage Comment
+      if: github.event.pull_request.head.repo.full_name == github.repository
+      uses: peter-evans/find-comment@v3
+      id: fc
+      with:
+        token: "${{ github.token }}"
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: 'github-actions[bot]'
+        body-includes: Coverage Report
+
+    - name: Post Coverage Comment
+      if: github.event.pull_request.head.repo.full_name == github.repository
+      uses: peter-evans/create-or-update-comment@v5
+      with:
+        token: "${{ github.token }}"
+        comment-id: ${{ steps.fc.outputs.comment-id }}
+        issue-number: ${{ github.event.pull_request.number }}
+        edit-mode: replace
+        body: |
+          **Coverage Report**
+          PR coverage: ${{ steps.coverage.outputs.coverage }}%
+          Baseline: ${{ steps.comment-values.outputs.baseline }}%
+          Change: ${{ steps.comment-values.outputs.change }}
