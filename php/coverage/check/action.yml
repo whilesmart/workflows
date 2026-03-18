@@ -1,0 +1,73 @@
+name: 'Check Code Coverage'
+description: 'Checks if the code coverage for this project meets project standards.'
+inputs:
+  token:
+    description: 'The PAT token with access to repository secrets/variables'
+    required: true
+  strict_mode:
+    description: '[Boolean]. Determines if the action should fail if the code coverage is less than the baseline'
+    required: false
+    type: boolean
+    default: false
+  threshold:
+    description: '[Integer] Ignores the coverage check if the coverage is greater than the threshold'
+    type: integer
+    default: 90
+
+runs:
+  using: "composite"
+  steps:
+    - name: Get coverage
+      id: coverage
+      run: |
+        COVERAGE=$(php ${{ github.action_path }}/scripts/get_coverage.php)
+        echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
+      shell: bash
+
+    - name: Check coverage
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        BASELINE=$(gh variable get COVERAGE_BASELINE --repo "${{ github.repository }}"  2>/dev/null || echo 0)
+
+        php ${{ github.action_path }}/scripts/check_coverage.php "$BASELINE" ${{ steps.coverage.outputs.coverage }} ${{ inputs.strict_mode }} ${{ inputs.threshold }}
+      shell: bash
+
+      # Optional: post comment only if PR is not from a fork
+    - name: Compute comment values
+      id: comment-values
+      if: github.event.pull_request.head.repo.full_name == github.repository
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        PR_COVERAGE=${{ steps.coverage.outputs.coverage }}
+        BASELINE=$(gh variable get COVERAGE_BASELINE --repo "${{ github.repository }}"  2>/dev/null || echo 0)
+        
+        CHANGE=$(php -r "echo ($PR_COVERAGE-$BASELINE>=0?'✅+':'❌').round($PR_COVERAGE-$BASELINE,1).'%';")
+        echo "baseline=$BASELINE" >> $GITHUB_OUTPUT
+        echo "change=$CHANGE" >> $GITHUB_OUTPUT
+      shell: bash
+
+    - name: Find Coverage Comment
+      if: github.event.pull_request.head.repo.full_name == github.repository
+      uses: peter-evans/find-comment@v4
+      id: fc
+      with:
+        token: "${{ github.token }}"
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: 'github-actions[bot]'
+        body-includes: Coverage Report
+
+    - name: Post Coverage Comment
+      if: github.event.pull_request.head.repo.full_name == github.repository
+      uses: peter-evans/create-or-update-comment@v5
+      with:
+        token: "${{ github.token }}"
+        comment-id: ${{ steps.fc.outputs.comment-id }}
+        issue-number: ${{ github.event.pull_request.number }}
+        edit-mode: replace
+        body: |
+          **Coverage Report**
+          PR coverage: ${{ steps.coverage.outputs.coverage }}%
+          Baseline: ${{ steps.comment-values.outputs.baseline }}%
+          Change: ${{ steps.comment-values.outputs.change }}
