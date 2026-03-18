@@ -1,16 +1,16 @@
 name: 'Check Code Coverage'
-description: 'Checks if the code coverage for this project meets project standards.'
+description: 'Analyzes code coverage from a clover report, compares it against a baseline stored in a repository variable, and posts a detailed summary comment on the pull request. Optionally fails if coverage decreases or falls below a specified threshold.'
 inputs:
   token:
-    description: 'The PAT token with access to repository secrets/variables'
+    description: 'GitHub Personal Access Token (PAT) with permissions to read repository variables (Actions variables).'
     required: true
   strict_mode:
-    description: '[Boolean]. Determines if the action should fail if the code coverage is less than the baseline'
+    description: 'If set to true, the action will fail the build if the current coverage is lower than the baseline.'
     required: false
     type: boolean
     default: false
   threshold:
-    description: '[Integer] Ignores the coverage check if the coverage is greater than the threshold'
+    description: 'Coverage percentage (0-100) above which the check is automatically considered successful, bypassing the baseline comparison.'
     type: integer
     default: 90
 

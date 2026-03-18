@@ -1,8 +1,8 @@
 name: 'Update Code Coverage'
-description: 'Updates the baseline code coverage in the repository.'
+description: 'Extracts the final code coverage from a pull request comment and updates the repository variable COVERAGE_BASELINE if the new coverage is higher. Designed for use in post-merge workflows.'
 inputs:
   token:
-    description: 'The PAT token with access to repository secrets/variables'
+    description: 'GitHub Personal Access Token (PAT) with permissions to write repository variables (Actions variables).'
     required: true
 
 runs:
@@ -50,7 +50,7 @@ runs:
         fi
 
     # Step 3: Update baseline if coverage is higher
-    - name: Update baseline JSON if higher
+    - name: Update baseline coverage if higher
       env:
         GH_TOKEN: ${{ inputs.token }}
       shell: bash
