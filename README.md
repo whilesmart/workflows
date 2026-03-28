@@ -347,7 +347,11 @@ name: CI & Coverage Check
 on:
   pull_request:
     branches: [main]
-
+    
+permissions:
+  contents: write
+  pull-requests: write
+  
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -386,6 +390,10 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+  pull-requests: write
+  
 jobs:
   update-baseline:
     runs-on: ubuntu-latest

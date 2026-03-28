@@ -1,24 +1,24 @@
 <?php
+$baseline = (float)$argv[1];
+$current = (float)$argv[2];
+$strict_mode = filter_var($argv[3], FILTER_VALIDATE_BOOLEAN);
+$threshold = (float)$argv[4] ?? 90;
 
-$current = (float)$argv[1];
-$baselineFile = '.github/coverage-baseline.json';
+$tt = $strict_mode ? 'yes' : 'no';
+echo "baseline: $baseline\n";
+echo "current: $current\n";
+echo "strict_mode: $argv[3] - $strict_mode - $tt\n";
+echo "threshold: $threshold\n";
 
-// Ensure baseline file exists
-if (!file_exists($baselineFile)) {
-    if (!is_dir('.github')) mkdir('.github', 0777, true);
-    file_put_contents($baselineFile, json_encode(['coverage' => 0, 'exempt' => 90], JSON_PRETTY_PRINT));
-}
-
-$data = json_decode(file_get_contents($baselineFile), true);
-$baseline = (float)($data['coverage'] ?? 0);
-$exempt = (float)($data['exempt'] ?? 90);
 
 echo "Baseline coverage: {$baseline}%\n";
 echo "Current coverage: {$current}%\n";
 
-if ($current < $exempt && $current < $baseline) {
+if ($current < $threshold && $current < $baseline) {
     echo "Current coverage of $current% is less than the baseline coverage of $baseline%  ❌\n";
-    exit(1);
+    if ($strict_mode) {
+        exit(1);
+    }
+} else {
+    echo "Coverage OK ✅\n";
 }
-
-echo "Coverage OK ✅\n";

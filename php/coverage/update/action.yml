@@ -29,7 +29,7 @@ runs:
         echo "PR number is $PR_NUMBER"
         echo "pull_request_number=$PR_NUMBER" >> $GITHUB_OUTPUT
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ github.token }}
 
     - name: Find Comment
       uses: peter-evans/find-comment@v4
