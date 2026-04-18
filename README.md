@@ -387,8 +387,10 @@ This workflow runs when changes are merged to the main branch to update the cove
 name: Update Coverage Baseline
 
 on:
-  push:
-    branches: [main]
+  pull_request:
+    types: [closed]
+    branches:
+      - main # The branch the PR was merged into
 
 permissions:
   contents: write
@@ -396,6 +398,7 @@ permissions:
   
 jobs:
   update-baseline:
+    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

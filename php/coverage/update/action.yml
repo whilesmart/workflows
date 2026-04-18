@@ -20,22 +20,11 @@ runs:
         echo "current=$BASELINE" >> $GITHUB_OUTPUT
 
     # Step 2: Try to get coverage from PR comment (same-repo PRs)
-    - name: Get Pull Request Number
-      id: get_pr_id
-      shell: bash
-      run: |
-        # Use the GITHUB_SHA (the commit that triggered the workflow) to find the associated PR
-        PR_NUMBER=$(gh pr list --state merged --search "$GITHUB_SHA" --json number -q '.[0].number')
-        echo "PR number is $PR_NUMBER"
-        echo "pull_request_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-
     - name: Find Comment
       uses: peter-evans/find-comment@v4
       id: fc
       with:
-        issue-number: ${{ steps.get_pr_id.outputs.pull_request_number }}
+        issue-number: ${{ github.event.pull_request.number }}
         body-includes: Coverage Report
 
     - name: Get PR coverage
