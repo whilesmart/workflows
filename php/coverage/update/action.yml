@@ -1,0 +1,58 @@
+name: 'Update Code Coverage'
+description: 'Extracts the final code coverage from a pull request comment and updates the repository variable COVERAGE_BASELINE if the new coverage is higher. Designed for use in post-merge workflows.'
+inputs:
+  token:
+    description: 'GitHub Personal Access Token (PAT) with permissions to write repository variables (Actions variables).'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    # Step 1: Read current baseline
+    - name: Read current baseline
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      id: baseline
+      shell: bash
+      run: |
+        BASELINE=$(gh variable get COVERAGE_BASELINE --repo "${{ github.repository }}"  2>/dev/null || echo 0)
+        
+        echo "current=$BASELINE" >> $GITHUB_OUTPUT
+
+    # Step 2: Try to get coverage from PR comment (same-repo PRs)
+    - name: Find Comment
+      uses: peter-evans/find-comment@v4
+      id: fc
+      with:
+        issue-number: ${{ github.event.pull_request.number }}
+        body-includes: Coverage Report
+
+    - name: Get PR coverage
+      id: pr-coverage
+      shell: bash
+      run: |
+        if [ -n "${{ steps.fc.outputs.comment-body }}" ]; then
+          COV=$(echo "${{ steps.fc.outputs.comment-body }}" | grep "PR coverage:" | awk '{print $3}' | tr -d '%')
+          echo "coverage=$COV" >> $GITHUB_OUTPUT
+        else
+          echo "coverage=0" >> $GITHUB_OUTPUT
+        fi
+
+    # Step 3: Update baseline if coverage is higher
+    - name: Update baseline coverage if higher
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      shell: bash
+      run: |
+        CURRENT=${{ steps.baseline.outputs.current }}
+        PR_COVERAGE=${{ steps.pr-coverage.outputs.coverage }}
+        echo "Current baseline: $CURRENT%"
+        echo "New coverage: $PR_COVERAGE%"
+
+        COMP=$(php -r "echo ($PR_COVERAGE > $CURRENT) ? 1 : 0;")
+        if [ "$COMP" -eq 1 ]; then
+          gh variable set COVERAGE_BASELINE --body $PR_COVERAGE
+        else
+          echo "Baseline already higher. Skipping update."
+          exit 0
+        fi

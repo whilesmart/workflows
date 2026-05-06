@@ -1,0 +1,73 @@
+name: 'Check Code Coverage'
+description: 'Analyzes code coverage from a clover report, compares it against a baseline stored in a repository variable, and posts a detailed summary comment on the pull request. Optionally fails if coverage decreases or falls below a specified threshold.'
+inputs:
+  token:
+    description: 'GitHub Personal Access Token (PAT) with permissions to read repository variables (Actions variables).'
+    required: true
+  strict_mode:
+    description: 'If set to true, the action will fail the build if the current coverage is lower than the baseline.'
+    required: false
+    type: boolean
+    default: false
+  threshold:
+    description: 'Coverage percentage (0-100) above which the check is automatically considered successful, bypassing the baseline comparison.'
+    type: integer
+    default: 90
+
+runs:
+  using: "composite"
+  steps:
+    - name: Get coverage
+      id: coverage
+      run: |
+        COVERAGE=$(php ${{ github.action_path }}/scripts/get_coverage.php)
+        echo "coverage=$COVERAGE" >> $GITHUB_OUTPUT
+      shell: bash
+
+    - name: Check coverage
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        BASELINE=$(gh variable get COVERAGE_BASELINE --repo "${{ github.repository }}"  2>/dev/null || echo 0)
+
+        php ${{ github.action_path }}/scripts/check_coverage.php "$BASELINE" ${{ steps.coverage.outputs.coverage }} ${{ inputs.strict_mode }} ${{ inputs.threshold }}
+      shell: bash
+
+      # Optional: post comment only if PR is not from a fork
+    - name: Compute comment values
+      id: comment-values
+      if: github.event.pull_request.head.repo.full_name == github.repository
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        PR_COVERAGE=${{ steps.coverage.outputs.coverage }}
+        BASELINE=$(gh variable get COVERAGE_BASELINE --repo "${{ github.repository }}"  2>/dev/null || echo 0)
+        
+        CHANGE=$(php -r "echo ($PR_COVERAGE-$BASELINE>=0?'✅+':'❌').round($PR_COVERAGE-$BASELINE,1).'%';")
+        echo "baseline=$BASELINE" >> $GITHUB_OUTPUT
+        echo "change=$CHANGE" >> $GITHUB_OUTPUT
+      shell: bash
+
+    - name: Find Coverage Comment
+      if: github.event.pull_request.head.repo.full_name == github.repository
+      uses: peter-evans/find-comment@v4
+      id: fc
+      with:
+        token: "${{ github.token }}"
+        issue-number: ${{ github.event.pull_request.number }}
+        comment-author: 'github-actions[bot]'
+        body-includes: Coverage Report
+
+    - name: Post Coverage Comment
+      if: github.event.pull_request.head.repo.full_name == github.repository
+      uses: peter-evans/create-or-update-comment@v5
+      with:
+        token: "${{ github.token }}"
+        comment-id: ${{ steps.fc.outputs.comment-id }}
+        issue-number: ${{ github.event.pull_request.number }}
+        edit-mode: replace
+        body: |
+          **Coverage Report**
+          PR coverage: ${{ steps.coverage.outputs.coverage }}%
+          Baseline: ${{ steps.comment-values.outputs.baseline }}%
+          Change: ${{ steps.comment-values.outputs.change }}

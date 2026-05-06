@@ -15,6 +15,9 @@ workflows/
 │   ├── pre-release/          # Pre-release validation for Python projects
 │   └── release/              # Create Python package or app release
 ├── php/
+│   ├── coverage/
+│   │   ├── check/            # Checks if the code coverage has increased or decreased
+│   │   └── update/           # Update code coverage for a project if it has increased
 │   ├── pre-release/          # Pre-release validation
 │   ├── release/              # Create PHP package or app release
 │   └── laravel/
@@ -254,6 +257,164 @@ Source files are **included** by default. Use `.releaseignore` or `exclude_patte
 ---
 
 ## PHP Workflows
+
+### Check Code Coverage (`php/coverage/check`)
+
+Checks if the code coverage for this project meets project standards.
+
+**Features:**
+- Compares current PR coverage against a baseline stored in a repository variable (`COVERAGE_BASELINE`).
+- Posts a detailed coverage report comment on the PR.
+- Can be configured to fail if coverage decreases (strict mode).
+- Can be configured with a threshold to ignore checks if coverage is already high.
+
+**Usage:**
+
+```yaml
+name: Coverage Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Coverage
+        uses: whilesmart/workflows/php/coverage/check@main
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          strict_mode: true
+          threshold: 95
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `token` | Yes | - | PAT token with access to repository variables |
+| `strict_mode` | No | `false` | Fail if coverage is less than baseline |
+| `threshold` | No | `90` | Ignore check if coverage > threshold |
+
+### Update Code Coverage (`php/coverage/update`)
+
+Updates the baseline code coverage in the repository.
+
+**Features:**
+- Intended to run on merge to the main branch.
+- Extracts coverage from the PR comment.
+- Updates the `COVERAGE_BASELINE` repository variable if the new coverage is higher.
+
+**Usage:**
+
+```yaml
+name: Update Coverage Baseline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  update-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update Coverage Baseline
+        uses: whilesmart/workflows/php/coverage/update@main
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+```
+
+**Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `token` | Yes | - | PAT token with access to repository variables |
+
+### Typical Workflow Examples
+
+#### 1. On Pull Request (Check Coverage)
+
+This workflow runs on every pull request to ensure that code coverage meets the project's standards.
+
+```yaml
+name: CI & Coverage Check
+
+on:
+  pull_request:
+    branches: [main]
+    
+permissions:
+  contents: write
+  pull-requests: write
+  
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: xdebug
+
+      - name: Install Dependencies
+        run: composer install
+
+      - name: Run Tests
+        # Ensure the clover report is generated at the expected path
+        run: vendor/bin/phpunit --coverage-clover reports/coverage/coverage.xml
+
+      - name: Check Coverage
+        uses: whilesmart/workflows/php/coverage/check@main
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          strict_mode: true
+          threshold: 90
+```
+
+#### 2. On Push to Main (Update Baseline)
+
+This workflow runs when changes are merged to the main branch to update the coverage baseline if coverage has improved.
+
+```yaml
+name: Update Coverage Baseline
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main # The branch the PR was merged into
+
+permissions:
+  contents: write
+  pull-requests: write
+  
+jobs:
+  update-baseline:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update Coverage Baseline
+        uses: whilesmart/workflows/php/coverage/update@main
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+```
+
+**Requirements:**
+- A PAT token with access to repository variables stored as a secret (e.g., `PAT_TOKEN`).
+- PHPUnit or similar tool generating a clover XML report at `reports/coverage/coverage.xml`.
+- A repository variable named `COVERAGE_BASELINE` (optional, defaults to 0 if not present).
+
+---
 
 ### Pre-Release Checks (`php/pre-release`)
 
