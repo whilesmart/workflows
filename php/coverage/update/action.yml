@@ -38,8 +38,8 @@ runs:
           echo "coverage=0" >> $GITHUB_OUTPUT
         fi
 
-    # Step 3: Update baseline if coverage is higher
-    - name: Update baseline coverage if higher
+    # Step 3: Update baseline coverage
+    - name: Update baseline coverage
       env:
         GH_TOKEN: ${{ inputs.token }}
       shell: bash
@@ -49,10 +49,4 @@ runs:
         echo "Current baseline: $CURRENT%"
         echo "New coverage: $PR_COVERAGE%"
 
-        COMP=$(php -r "echo ($PR_COVERAGE > $CURRENT) ? 1 : 0;")
-        if [ "$COMP" -eq 1 ]; then
-          gh variable set COVERAGE_BASELINE --body $PR_COVERAGE
-        else
-          echo "Baseline already higher. Skipping update."
-          exit 0
-        fi
+        gh variable set COVERAGE_BASELINE --body $PR_COVERAGE
