@@ -1,0 +1,63 @@
+name: 'Commit message validation'
+description: 'Validate commit messages against the shared Whilesmart conventional-commit rules'
+
+inputs:
+  from:
+    description: 'Start of the commit range to validate (exclusive)'
+    required: false
+    default: 'HEAD^'
+  to:
+    description: 'End of the commit range to validate (inclusive)'
+    required: false
+    default: 'HEAD'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+
+    - name: Install commitlint
+      shell: bash
+      run: npm install --no-save @commitlint/config-conventional @commitlint/cli
+
+    - name: Write commitlint config
+      shell: bash
+      run: |
+        cat << 'EOF' > commitlint.config.js
+        module.exports = {
+          extends: ['@commitlint/config-conventional'],
+          rules: {
+            'type-enum': [2, 'always', [
+              'feat', 'fix', 'perf', 'docs', 'style', 'refactor', 'test', 'chore', 'build', 'ci',
+              'enh', 'enhance', 'tweak', 'imp', 'improve',
+            ]],
+            'subject-case': [2, 'always', 'sentence-case'],
+            'header-max-length': [2, 'always', 80],
+          },
+          ignores: [
+            (commit) => commit.includes('Signed-off-by: dependabot[bot]'),
+          ],
+        };
+        EOF
+
+    - name: Run commitlint
+      shell: bash
+      run: npx commitlint --from "${{ inputs.from }}" --to "${{ inputs.to }}" --config commitlint.config.js
+
+    - name: Explain the rules on failure
+      if: ${{ failure() && github.actor != 'dependabot[bot]' }}
+      shell: bash
+      run: |
+        echo "::error::Invalid commit message. Follow the conventional-commit guidelines:"
+        echo "::error::- Type: feat, fix, perf, docs, style, refactor, test, chore, build, ci, enh, enhance, tweak, imp, improve"
+        echo "::error::- Scope (optional): the affected area, e.g. 'auth', 'ui'"
+        echo "::error::- Subject: sentence-case, at most 80 characters"
+        echo "::error::Example: feat(auth): Implement user login"

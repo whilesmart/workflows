@@ -6,6 +6,7 @@ A collection of reusable GitHub Actions organized by language/platform.
 
 ```
 workflows/
+├── commits/                  # Validate commit messages
 ├── go/
 │   └── release/              # Build & release Go binaries
 ├── js/
