@@ -31,7 +31,7 @@ runs:
     - name: Write commitlint config
       shell: bash
       run: |
-        cat << 'EOF' > commitlint.config.js
+        cat << 'EOF' > commitlint.config.cjs
         module.exports = {
           extends: ['@commitlint/config-conventional'],
           rules: {
@@ -50,7 +50,7 @@ runs:
 
     - name: Run commitlint
       shell: bash
-      run: npx commitlint --from "${{ inputs.from }}" --to "${{ inputs.to }}" --config commitlint.config.js
+      run: npx commitlint --from "${{ inputs.from }}" --to "${{ inputs.to }}" --config commitlint.config.cjs
 
     - name: Explain the rules on failure
       if: ${{ failure() && github.actor != 'dependabot[bot]' }}
