@@ -42,8 +42,8 @@ runs:
     - name: Configure Git
       shell: bash
       run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
+        git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
 
     - name: Read the version
       id: version
@@ -77,7 +77,6 @@ runs:
       shell: bash
       run: |
         TAG="${{ steps.version.outputs.tag }}"
-        git fetch --tags --quiet
         if git rev-parse "$TAG" >/dev/null 2>&1; then
           echo "::error::$TAG is already released. Change ${{ inputs.version_file }} to release again."
           exit 1
@@ -142,7 +141,7 @@ runs:
         echo "$MAJOR now points at $TAG"
 
     - name: Create the release
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ steps.version.outputs.tag }}
         name: ${{ steps.version.outputs.tag }}
