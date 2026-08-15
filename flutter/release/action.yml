@@ -1,0 +1,204 @@
+name: Flutter package release
+description: Validate, tag, optionally publish, and create a GitHub release for a Dart or Flutter package
+
+inputs:
+  token:
+    description: GitHub token used to push the tag and create the release
+    required: true
+  package_path:
+    description: Package directory containing pubspec.yaml and CHANGELOG.md
+    required: true
+  tag_prefix:
+    description: Prefix placed before the package version in the Git tag
+    required: true
+  package_type:
+    description: Package type, either dart or flutter
+    required: false
+    default: flutter
+  flutter_version:
+    description: Flutter SDK version used for validation and publishing
+    required: false
+    default: 3.38.9
+  publish_to_pub_dev:
+    description: Publish the package to pub.dev after creating the tag
+    required: false
+    default: 'false'
+  draft:
+    description: Create the GitHub release as a draft
+    required: false
+    default: 'false'
+
+outputs:
+  version:
+    description: Released package version
+    value: ${{ steps.package.outputs.version }}
+  tag:
+    description: Created Git tag
+    value: ${{ steps.package.outputs.tag }}
+  release_url:
+    description: GitHub release URL
+    value: ${{ steps.release.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check out repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ inputs.token }}
+
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: ${{ inputs.flutter_version }}
+        channel: stable
+        cache: true
+
+    - name: Read package metadata
+      id: package
+      shell: bash
+      env:
+        PACKAGE_PATH: ${{ inputs.package_path }}
+        TAG_PREFIX: ${{ inputs.tag_prefix }}
+      run: |
+        DEFAULT_BRANCH=$(jq -r '.repository.default_branch' "$GITHUB_EVENT_PATH")
+        if [ "$GITHUB_REF_TYPE" != "branch" ] || [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+          echo "::error::Releases must run from the default branch ($DEFAULT_BRANCH)"
+          exit 1
+        fi
+
+        if [ "${{ inputs.package_type }}" != "dart" ] && [ "${{ inputs.package_type }}" != "flutter" ]; then
+          echo "::error::package_type must be dart or flutter"
+          exit 1
+        fi
+
+        if [ ! -f "$PACKAGE_PATH/pubspec.yaml" ]; then
+          echo "::error::pubspec.yaml not found in $PACKAGE_PATH"
+          exit 1
+        fi
+
+        VERSION=$(awk '$1 == "version:" { print $2; exit }' "$PACKAGE_PATH/pubspec.yaml")
+        NAME=$(awk '$1 == "name:" { print $2; exit }' "$PACKAGE_PATH/pubspec.yaml")
+
+        if [ -z "$VERSION" ] || [ -z "$NAME" ]; then
+          echo "::error::Package name or version is missing from pubspec.yaml"
+          exit 1
+        fi
+
+        TAG="${TAG_PREFIX}${VERSION}"
+        if git rev-parse "$TAG" >/dev/null 2>&1; then
+          echo "::error::Tag $TAG already exists"
+          exit 1
+        fi
+
+        echo "name=$NAME" >> "$GITHUB_OUTPUT"
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+    - name: Read release notes
+      id: changelog
+      shell: bash
+      env:
+        PACKAGE_PATH: ${{ inputs.package_path }}
+        VERSION: ${{ steps.package.outputs.version }}
+      run: |
+        CHANGELOG="$PACKAGE_PATH/CHANGELOG.md"
+        if [ ! -f "$CHANGELOG" ]; then
+          echo "::error::CHANGELOG.md not found in $PACKAGE_PATH"
+          exit 1
+        fi
+
+        NOTES=$(mktemp)
+        awk -v version="$VERSION" '
+          BEGIN { found=0 }
+          /^## / {
+            if (found) exit
+            heading=$0
+            gsub(/\[|\]/, "", heading)
+            if (heading ~ "^## " version "([[:space:]]|$)") {
+              found=1
+              next
+            }
+          }
+          found { print }
+        ' "$CHANGELOG" > "$NOTES"
+
+        if [ ! -s "$NOTES" ]; then
+          echo "::error::No changelog entry found for version $VERSION"
+          exit 1
+        fi
+
+        {
+          echo 'notes<<EOF'
+          cat "$NOTES"
+          echo 'EOF'
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Resolve dependencies
+      shell: bash
+      run: flutter pub get
+
+    - name: Check formatting
+      shell: bash
+      run: dart format --output=none --set-exit-if-changed "${{ inputs.package_path }}"
+
+    - name: Analyze Dart package
+      if: inputs.package_type == 'dart'
+      shell: bash
+      run: dart analyze "${{ inputs.package_path }}"
+
+    - name: Analyze Flutter package
+      if: inputs.package_type == 'flutter'
+      shell: bash
+      run: flutter analyze "${{ inputs.package_path }}"
+
+    - name: Test Dart package
+      if: inputs.package_type == 'dart'
+      shell: bash
+      working-directory: ${{ inputs.package_path }}
+      run: |
+        if find test -name '*_test.dart' -print -quit 2>/dev/null | grep -q .; then
+          dart test
+        fi
+
+    - name: Test Flutter package
+      if: inputs.package_type == 'flutter'
+      shell: bash
+      working-directory: ${{ inputs.package_path }}
+      run: |
+        if find test -name '*_test.dart' -print -quit 2>/dev/null | grep -q .; then
+          flutter test
+        fi
+
+    - name: Validate package publication
+      shell: bash
+      working-directory: ${{ inputs.package_path }}
+      run: dart pub publish --dry-run
+
+    - name: Create and push tag
+      shell: bash
+      env:
+        TAG: ${{ steps.package.outputs.tag }}
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git tag -a "$TAG" -m "Release $TAG"
+        git push origin "$TAG"
+
+    - name: Publish to pub.dev
+      if: inputs.publish_to_pub_dev == 'true'
+      shell: bash
+      working-directory: ${{ inputs.package_path }}
+      run: dart pub publish --force
+
+    - name: Create GitHub release
+      id: release
+      uses: softprops/action-gh-release@v2
+      with:
+        token: ${{ inputs.token }}
+        tag_name: ${{ steps.package.outputs.tag }}
+        name: ${{ steps.package.outputs.name }} ${{ steps.package.outputs.version }}
+        body: ${{ steps.changelog.outputs.notes }}
+        draft: ${{ inputs.draft }}
+        prerelease: ${{ contains(steps.package.outputs.version, '-') }}

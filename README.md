@@ -6,6 +6,8 @@ A collection of reusable GitHub Actions organized by language/platform.
 
 ```
 workflows/
+├── flutter/
+│   └── release/             # Release Dart and Flutter packages
 ├── commits/                  # Validate commit messages
 ├── go/
 │   └── release/              # Build & release Go binaries
@@ -763,6 +765,37 @@ Pass additional patterns directly:
       examples/*
       *.md
 ```
+
+## Flutter Workflows
+
+### Package release (`flutter/release`)
+
+Validates a Dart or Flutter package, creates a package-specific tag and GitHub release, and can optionally publish to pub.dev.
+
+```yaml
+name: Release package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: whilesmart/workflows/flutter/release@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          package_path: packages/example
+          package_type: flutter
+          tag_prefix: example-v
+          publish_to_pub_dev: 'false'
+```
+
+The package version and release notes come from the selected package's `pubspec.yaml` and `CHANGELOG.md`. Set `package_type` to `dart` for a pure Dart package.
 
 ---
 
