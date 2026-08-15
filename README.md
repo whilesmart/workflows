@@ -35,6 +35,21 @@ workflows/
 
 ---
 
+## Using these actions
+
+Pin a major version so a change here cannot reach your repo unannounced:
+
+```yaml
+- uses: whilesmart/workflows/tagged-release@v1     # newest 1.x
+- uses: whilesmart/workflows/tagged-release@v1.0.0 # exactly this one
+- uses: whilesmart/workflows/tagged-release@main   # whatever landed last
+```
+
+This repo releases itself with `tagged-release`: change `VERSION` on `main`, and the tag, the
+moved `v1` and the release notes follow from the matching `CHANGELOG.md` heading.
+
+---
+
 ## Tagged Release (`tagged-release`)
 
 Releases whatever version a `VERSION` file names, for repos with no package manifest to read the

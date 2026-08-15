@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - VERSION
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The copy in this commit, not the one on main, so a release is made by the code it releases.
+      - uses: ./tagged-release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          major_tag: 'true'
