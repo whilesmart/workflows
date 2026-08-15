@@ -35,6 +35,50 @@ workflows/
 
 ---
 
+## Tagged Release (`tagged-release`)
+
+Releases whatever version a `VERSION` file names, for repos with no package manifest to read the
+version from: a composite action, a set of scripts, a config repo.
+
+It refuses to release a version that already has a tag, so a run against an unchanged `VERSION`
+fails instead of quietly re-releasing what is already out.
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: whilesmart/workflows/tagged-release@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          major_tag: 'true'
+```
+
+| Input | Required | Default | Purpose |
+|-------|----------|---------|---------|
+| `token` | Yes | | Token used to push the tag and create the release |
+| `version_file` | No | `VERSION` | File whose first line is the version |
+| `changelog` | No | `CHANGELOG.md` | Where the release notes come from. Empty string releases without notes |
+| `major_tag` | No | `false` | Also move `v1` to this release, for consumers pinning a major version |
+| `draft` | No | `false` | Create the release as a draft |
+
+Outputs `version` and `tag`.
+
+The changelog must carry a heading for the version being released, such as `## [1.4.2] - 2026-08-15`,
+and everything under it up to the next heading becomes the release notes.
+
+---
+
 ## Go Workflows
 
 ### Release (`go/release`)
