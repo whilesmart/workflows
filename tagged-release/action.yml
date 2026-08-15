@@ -1,0 +1,163 @@
+name: 'Tagged Release'
+description: 'Releases whatever version a VERSION file names, and refuses when that version has been released already.'
+
+inputs:
+  token:
+    description: 'The GitHub token for authentication'
+    required: true
+  version_file:
+    description: 'File holding the version to release, one bare version on the first line'
+    required: false
+    default: 'VERSION'
+  changelog:
+    description: 'Changelog to take the release notes from. Set to an empty string to release without notes.'
+    required: false
+    default: 'CHANGELOG.md'
+  major_tag:
+    description: 'Also move the major tag (v1 for 1.4.2), so consumers can follow a major version'
+    required: false
+    default: 'false'
+  draft:
+    description: 'Create the release as a draft'
+    required: false
+    default: 'false'
+
+outputs:
+  version:
+    description: 'The version that was released'
+    value: ${{ steps.version.outputs.version }}
+  tag:
+    description: 'The tag that was created'
+    value: ${{ steps.version.outputs.tag }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ inputs.token }}
+
+    - name: Configure Git
+      shell: bash
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+    - name: Read the version
+      id: version
+      shell: bash
+      run: |
+        FILE="${{ inputs.version_file }}"
+        if [ ! -f "$FILE" ]; then
+          echo "::error::$FILE not found. This action releases the version that file names."
+          exit 1
+        fi
+
+        VERSION="$(head -n1 "$FILE" | tr -d '[:space:]')"
+        VERSION="${VERSION#v}"
+        if [ -z "$VERSION" ]; then
+          echo "::error::$FILE is empty."
+          exit 1
+        fi
+        if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+].+)?$'; then
+          echo "::error::$FILE says '$VERSION', which is not a version like 1.4.2."
+          exit 1
+        fi
+
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+        echo "major=v${VERSION%%.*}" >> "$GITHUB_OUTPUT"
+        echo "Releasing $VERSION"
+
+    # The check the whole action exists for: a release run without touching the version file is a
+    # mistake, and saying so beats quietly re-releasing what is already out.
+    - name: Refuse a version that is already released
+      shell: bash
+      run: |
+        TAG="${{ steps.version.outputs.tag }}"
+        git fetch --tags --quiet
+        if git rev-parse "$TAG" >/dev/null 2>&1; then
+          echo "::error::$TAG is already released. Change ${{ inputs.version_file }} to release again."
+          exit 1
+        fi
+        echo "$TAG is new"
+
+    - name: Take the release notes from the changelog
+      id: notes
+      shell: bash
+      run: |
+        CHANGELOG="${{ inputs.changelog }}"
+        VERSION="${{ steps.version.outputs.version }}"
+
+        if [ -z "$CHANGELOG" ]; then
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [ ! -f "$CHANGELOG" ]; then
+          echo "::error::$CHANGELOG not found. Pass changelog: '' to release without notes."
+          exit 1
+        fi
+
+        NOTES="$(mktemp)"
+        awk -v version="$VERSION" '
+          /^## / {
+            if (printing) exit
+            if (index($0, "[" version "]") || index($0, " " version " ") || $2 == version) { printing=1; next }
+          }
+          printing { print }
+        ' "$CHANGELOG" > "$NOTES"
+
+        if [ ! -s "$NOTES" ]; then
+          echo "::error::$CHANGELOG has nothing under $VERSION. Add a heading such as '## [$VERSION] - $(date +%F)'."
+          rm -f "$NOTES"
+          exit 1
+        fi
+
+        {
+          echo "notes<<CHANGELOG_EOF"
+          cat "$NOTES"
+          echo "CHANGELOG_EOF"
+        } >> "$GITHUB_OUTPUT"
+        rm -f "$NOTES"
+
+    - name: Tag the release
+      shell: bash
+      run: |
+        TAG="${{ steps.version.outputs.tag }}"
+        git tag -a "$TAG" -m "Release $TAG"
+        git push origin "$TAG"
+
+    # A consumer pinning @v1 follows the newest 1.x, so the major tag moves with each release.
+    - name: Move the major tag
+      if: inputs.major_tag == 'true'
+      shell: bash
+      run: |
+        MAJOR="${{ steps.version.outputs.major }}"
+        TAG="${{ steps.version.outputs.tag }}"
+        git tag -f -a "$MAJOR" -m "Latest $MAJOR release: $TAG"
+        git push origin "$MAJOR" --force
+        echo "$MAJOR now points at $TAG"
+
+    - name: Create the release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.tag }}
+        name: ${{ steps.version.outputs.tag }}
+        body: ${{ steps.notes.outputs.notes }}
+        draft: ${{ inputs.draft }}
+        token: ${{ inputs.token }}
+
+    - name: Summarise
+      shell: bash
+      run: |
+        {
+          echo "### Released ${{ steps.version.outputs.tag }}"
+          echo
+          echo "- Tag \`${{ steps.version.outputs.tag }}\` created from \`${{ inputs.version_file }}\`"
+          if [ "${{ inputs.major_tag }}" = "true" ]; then
+            echo "- \`${{ steps.version.outputs.major }}\` moved to it"
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
