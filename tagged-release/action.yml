@@ -30,6 +30,8 @@ outputs:
     description: 'The tag that was created'
     value: ${{ steps.version.outputs.tag }}
 
+# Every value below reaches a script through the environment rather than through ${{ }}, which is
+# pasted into the script before it runs and would execute whatever a filename happened to contain.
 runs:
   using: "composite"
   steps:
@@ -48,37 +50,42 @@ runs:
     - name: Read the version
       id: version
       shell: bash
+      env:
+        VERSION_FILE: ${{ inputs.version_file }}
       run: |
-        FILE="${{ inputs.version_file }}"
-        if [ ! -f "$FILE" ]; then
-          echo "::error::$FILE not found. This action releases the version that file names."
+        if [ ! -f "$VERSION_FILE" ]; then
+          echo "::error::$VERSION_FILE not found. This action releases the version that file names."
           exit 1
         fi
 
-        VERSION="$(head -n1 "$FILE" | tr -d '[:space:]')"
+        VERSION="$(head -n1 "$VERSION_FILE" | tr -d '[:space:]')"
         VERSION="${VERSION#v}"
         if [ -z "$VERSION" ]; then
-          echo "::error::$FILE is empty."
+          echo "::error::$VERSION_FILE is empty."
           exit 1
         fi
         if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+].+)?$'; then
-          echo "::error::$FILE says '$VERSION', which is not a version like 1.4.2."
+          echo "::error::$VERSION_FILE says '$VERSION', which is not a version like 1.4.2."
           exit 1
         fi
 
-        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-        echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
-        echo "major=v${VERSION%%.*}" >> "$GITHUB_OUTPUT"
+        {
+          echo "version=$VERSION"
+          echo "tag=v$VERSION"
+          echo "major=v${VERSION%%.*}"
+        } >> "$GITHUB_OUTPUT"
         echo "Releasing $VERSION"
 
     # The check the whole action exists for: a release run without touching the version file is a
     # mistake, and saying so beats quietly re-releasing what is already out.
     - name: Refuse a version that is already released
       shell: bash
+      env:
+        TAG: ${{ steps.version.outputs.tag }}
+        VERSION_FILE: ${{ inputs.version_file }}
       run: |
-        TAG="${{ steps.version.outputs.tag }}"
         if git rev-parse "$TAG" >/dev/null 2>&1; then
-          echo "::error::$TAG is already released. Change ${{ inputs.version_file }} to release again."
+          echo "::error::$TAG is already released. Change $VERSION_FILE to release again."
           exit 1
         fi
         echo "$TAG is new"
@@ -86,13 +93,15 @@ runs:
     - name: Take the release notes from the changelog
       id: notes
       shell: bash
+      env:
+        CHANGELOG: ${{ inputs.changelog }}
+        VERSION: ${{ steps.version.outputs.version }}
       run: |
-        CHANGELOG="${{ inputs.changelog }}"
-        VERSION="${{ steps.version.outputs.version }}"
-
         if [ -z "$CHANGELOG" ]; then
-          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          {
+            echo "notes<<CHANGELOG_EOF"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
           exit 0
         fi
         if [ ! -f "$CHANGELOG" ]; then
@@ -124,8 +133,9 @@ runs:
 
     - name: Tag the release
       shell: bash
+      env:
+        TAG: ${{ steps.version.outputs.tag }}
       run: |
-        TAG="${{ steps.version.outputs.tag }}"
         git tag -a "$TAG" -m "Release $TAG"
         git push origin "$TAG"
 
@@ -133,9 +143,10 @@ runs:
     - name: Move the major tag
       if: inputs.major_tag == 'true'
       shell: bash
+      env:
+        TAG: ${{ steps.version.outputs.tag }}
+        MAJOR: ${{ steps.version.outputs.major }}
       run: |
-        MAJOR="${{ steps.version.outputs.major }}"
-        TAG="${{ steps.version.outputs.tag }}"
         git tag -f -a "$MAJOR" -m "Latest $MAJOR release: $TAG"
         git push origin "$MAJOR" --force
         echo "$MAJOR now points at $TAG"
@@ -151,12 +162,17 @@ runs:
 
     - name: Summarise
       shell: bash
+      env:
+        TAG: ${{ steps.version.outputs.tag }}
+        MAJOR: ${{ steps.version.outputs.major }}
+        VERSION_FILE: ${{ inputs.version_file }}
+        MAJOR_TAG: ${{ inputs.major_tag }}
       run: |
         {
-          echo "### Released ${{ steps.version.outputs.tag }}"
+          echo "### Released $TAG"
           echo
-          echo "- Tag \`${{ steps.version.outputs.tag }}\` created from \`${{ inputs.version_file }}\`"
-          if [ "${{ inputs.major_tag }}" = "true" ]; then
-            echo "- \`${{ steps.version.outputs.major }}\` moved to it"
+          echo "- Tag \`$TAG\` created from \`$VERSION_FILE\`"
+          if [ "$MAJOR_TAG" = "true" ]; then
+            echo "- \`$MAJOR\` moved to it"
           fi
         } >> "$GITHUB_STEP_SUMMARY"
