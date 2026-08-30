@@ -1,0 +1,165 @@
+name: 'Publish package'
+description: 'Publishes a JavaScript package to a registry and creates the GitHub release, with notes from CHANGELOG.md.'
+
+inputs:
+  token:
+    description: 'The GitHub token for authentication.'
+    required: true
+  registry:
+    description: 'The registry to publish to'
+    required: false
+    default: 'https://npm.pkg.github.com'
+  scope:
+    description: 'The package scope, for a scoped package (e.g. @acme)'
+    required: false
+    default: ''
+  access:
+    description: 'public or restricted, passed to npm publish'
+    required: false
+    default: ''
+  node_version:
+    description: 'Node.js version to use'
+    required: false
+    default: '20'
+  install:
+    description: 'Whether to install dependencies before verifying'
+    required: false
+    default: 'false'
+  verify_command:
+    description: 'A command that must pass before anything is published'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node_version }}
+        registry-url: ${{ inputs.registry }}
+        scope: ${{ inputs.scope }}
+
+    - name: Extract version from package.json
+      id: get_version
+      shell: bash
+      run: |
+        if [ ! -f "package.json" ]; then
+          echo "::error::package.json not found!"
+          exit 1
+        fi
+
+        VERSION=$(jq -r '.version // empty' package.json)
+
+        if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+          echo "::error::No version found in package.json!"
+          echo "Please add a 'version' field to your package.json file."
+          exit 1
+        fi
+
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Found version: $VERSION"
+
+    - name: Validate version
+      shell: bash
+      run: |
+        FILE_VERSION="${{ steps.get_version.outputs.version }}"
+
+        if [ "${{ github.ref_type }}" != "tag" ]; then
+          echo "Not a tag, nothing to agree with"
+          exit 0
+        fi
+
+        TAG_VERSION="${GITHUB_REF_NAME#v}"
+
+        if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
+          echo "::error::Version mismatch: tag ($TAG_VERSION) != package.json ($FILE_VERSION)"
+          exit 1
+        fi
+        echo "Version validated: $FILE_VERSION"
+
+    - name: Install dependencies
+      if: inputs.install == 'true'
+      shell: bash
+      run: |
+        if [ -f "package-lock.json" ]; then
+          npm ci
+        elif [ -f "yarn.lock" ]; then
+          yarn install --frozen-lockfile
+        elif [ -f "pnpm-lock.yaml" ]; then
+          npm install -g pnpm
+          pnpm install --frozen-lockfile
+        else
+          npm install
+        fi
+        echo "Dependencies installed"
+
+    - name: Verify
+      if: inputs.verify_command != ''
+      shell: bash
+      run: ${{ inputs.verify_command }}
+
+    # Read before publishing, because a version published without notes cannot
+    # be published again to add them.
+    - name: Extract release notes from CHANGELOG.md
+      shell: bash
+      run: |
+        if [ ! -f "CHANGELOG.md" ]; then
+          echo "::error::CHANGELOG.md not found!"
+          exit 1
+        fi
+
+        VERSION="${{ steps.get_version.outputs.version }}"
+
+        awk -v version="$VERSION" '
+        BEGIN { found=0; printing=0 }
+        /^## \[/ {
+          if (found && printing) exit
+          if ($0 ~ "\\[" version "\\]") {
+            found=1
+            printing=1
+            next
+          }
+        }
+        found && printing && /^## \[/ { exit }
+        found && printing { print }
+        ' CHANGELOG.md > "${RUNNER_TEMP}/release-notes.md"
+
+        if [ ! -s "${RUNNER_TEMP}/release-notes.md" ]; then
+          echo "::error::No changelog entry found for version $VERSION!"
+          exit 1
+        fi
+
+        echo "Found changelog entry for version $VERSION"
+
+    - name: Publish
+      shell: bash
+      run: |
+        ACCESS=""
+        if [ -n "${{ inputs.access }}" ]; then
+          ACCESS="--access ${{ inputs.access }}"
+        fi
+        npm publish $ACCESS
+      env:
+        NODE_AUTH_TOKEN: ${{ inputs.token }}
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        token: ${{ inputs.token }}
+        tag_name: v${{ steps.get_version.outputs.version }}
+        name: v${{ steps.get_version.outputs.version }}
+        body_path: ${{ runner.temp }}/release-notes.md
+
+    - name: Summary
+      shell: bash
+      run: |
+        echo "### Published" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- Version: ${{ steps.get_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Registry: ${{ inputs.registry }}" >> $GITHUB_STEP_SUMMARY

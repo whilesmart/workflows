@@ -318,6 +318,60 @@ Source files are **included** by default. Use `.releaseignore` or `exclude_patte
 
 ---
 
+### Publish (`js/publish`)
+
+Publishes a JavaScript package to a registry and creates the GitHub release.
+
+`js/release` tags a repository and cuts a release; it does not publish. Use this
+where the deliverable is the package itself.
+
+**Features:**
+- Publishes to any npm-compatible registry, GitHub Packages by default
+- Parses release notes from `CHANGELOG.md`, and refuses to publish a version
+  that has no entry
+- Checks a tag against `package.json` when triggered by one
+- Runs a verification command before anything is published
+- Creates the GitHub release from the same notes
+
+**Usage:**
+
+```yaml
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish
+        uses: whilesmart/workflows/js/publish@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          scope: '@acme'
+          verify_command: node scripts/check-exports.mjs
+```
+
+Publishing to the public registry instead needs `registry`, `access`, and a
+token for it:
+
+```yaml
+        with:
+          token: ${{ secrets.NPM_TOKEN }}
+          registry: https://registry.npmjs.org
+          access: public
+```
+
+---
+
 ## PHP Workflows
 
 ### Check Code Coverage (`php/coverage/check`)
