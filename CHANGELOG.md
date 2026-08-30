@@ -2,6 +2,17 @@
 
 All notable changes to these reusable actions are documented in this file.
 
+## [1.2.0] - 2026-08-30
+
+### Changed
+
+- `js/release`, `python/release`, `php/release`, `php/laravel/release` and `package/release`
+  create their GitHub release through `softprops/action-gh-release`, in place of
+  `actions/create-release`, which is archived and still declares the Node 12 runtime. The
+  release archive is attached by the same step, so `actions/upload-release-asset`, archived
+  on the same runtime, is no longer used either. Nothing about the releases these actions
+  produce changes.
+
 ## [1.1.0] - 2026-08-30
 
 ### Added
