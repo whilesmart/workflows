@@ -131,12 +131,11 @@ runs:
       shell: bash
 
     - name: Create GitHub Release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ inputs.token }}
+      uses: softprops/action-gh-release@v2
       with:
+        token: ${{ inputs.token }}
         tag_name: v${{ steps.get_version.outputs.version }}
-        release_name: Release ${{ steps.get_version.outputs.version }}
+        name: Release ${{ steps.get_version.outputs.version }}
         body: |
           ## Release Notes
           

@@ -267,12 +267,11 @@ runs:
     - name: Create GitHub Release (Package)
       if: inputs.release_type == 'package'
       id: create_release_package
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ inputs.token }}
+      uses: softprops/action-gh-release@v2
       with:
+        token: ${{ inputs.token }}
         tag_name: v${{ steps.get_version.outputs.version }}
-        release_name: Release ${{ steps.get_version.outputs.version }}
+        name: Release ${{ steps.get_version.outputs.version }}
         body: |
           ## Release Notes
 
@@ -299,12 +298,11 @@ runs:
     - name: Create GitHub Release (App)
       if: inputs.release_type == 'app'
       id: create_release_app
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ inputs.token }}
+      uses: softprops/action-gh-release@v2
       with:
+        token: ${{ inputs.token }}
         tag_name: v${{ steps.get_version.outputs.version }}
-        release_name: Release ${{ steps.get_version.outputs.version }}
+        name: Release ${{ steps.get_version.outputs.version }}
         body: |
           ## Release Notes
 
@@ -325,17 +323,7 @@ runs:
           View the complete version history in [CHANGELOG.md](CHANGELOG.md).
         draft: true
         prerelease: false
-
-    - name: Upload release archive
-      if: inputs.create_archive == 'true' && inputs.release_type == 'app'
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ inputs.token }}
-      with:
-        upload_url: ${{ steps.create_release_app.outputs.upload_url }}
-        asset_path: ./${{ steps.create_archive.outputs.archive_name }}
-        asset_name: ${{ steps.create_archive.outputs.archive_name }}
-        asset_content_type: application/zip
+        files: ${{ inputs.create_archive == 'true' && format('./{0}', steps.create_archive.outputs.archive_name) || '' }}
 
     - name: Summary
       if: success()
