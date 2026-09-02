@@ -2,6 +2,20 @@
 
 All notable changes to these reusable actions are documented in this file.
 
+## [1.3.0] - 2026-09-02
+
+### Added
+
+- Project-specific setup, validation, testing, artifact building, release notes, and asset
+  selection for Go releases
+- Optional checks that the released commit belongs to a chosen branch
+- A non-publishing mode for exercising the complete release path in CI
+
+### Changed
+
+- Go release tags are created only after validation, tests, and artifact builds pass
+- Go releases use the current GitHub release action
+
 ## [1.2.0] - 2026-08-30
 
 ### Changed

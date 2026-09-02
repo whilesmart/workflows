@@ -106,6 +106,9 @@ Builds cross-platform Go binaries and creates a GitHub release with downloadable
 - Archive creation (tar.gz for Unix, zip for Windows)
 - SHA256 checksums
 - Optional CHANGELOG.md parsing
+- Project-specific setup, validation, testing, and artifact commands
+- Checked-in release notes and custom artifact patterns
+- Optional release branch ancestry checks
 - Installation instructions in release notes
 
 **Usage (supports both manual dispatch and tag push):**
@@ -133,7 +136,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Create Release
-        uses: whilesmart/workflows/go/release@main
+        uses: whilesmart/workflows/go/release@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           binary_name: myapp
@@ -141,17 +144,43 @@ jobs:
           version: ${{ github.event.inputs.version }}
 ```
 
+Projects with their own artifact builder can keep packaging in the project and
+let the shared action enforce the release sequence:
+
+```yaml
+- uses: whilesmart/workflows/go/release@v1
+  with:
+    token: ${{ secrets.GITHUB_TOKEN }}
+    go_version: '1.24'
+    release_branch: main
+    setup_command: install-project-release-tools
+    verify_command: ./scripts/release-check.sh "$RELEASE_TAG"
+    build_command: ./scripts/build-release.sh "$RELEASE_TAG"
+    release_notes_file: docs/releases/${{ github.ref_name }}.md
+    generate_checksums: 'false'
+    assets: dist/*
+```
+
 **Inputs:**
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `token` | Yes | - | GitHub token for authentication |
-| `binary_name` | Yes | - | Name of the output binary |
+| `binary_name` | No | - | Name of the output binary. Required with the built-in builder |
 | `version` | No | - | Version to release. If not provided, extracts from git tag |
 | `build_path` | No | `.` | Path to main.go directory |
 | `go_version` | No | `1.21` | Go version to use |
 | `platforms` | No | See below | JSON array of target platforms |
 | `ldflags` | No | - | Additional ldflags for build |
+| `setup_command` | No | - | Prepare project-specific release dependencies |
+| `verify_command` | No | - | Validate release metadata before publishing |
+| `test_command` | No | Go build, vet, and race tests | Test the release before publishing |
+| `build_command` | No | - | Replace the built-in artifact builder |
+| `release_branch` | No | - | Require the released commit to belong to this branch |
+| `release_notes_file` | No | CHANGELOG.md section | Use a checked-in release notes file |
+| `assets` | No | `dist/*` | Select files attached to the release |
+| `generate_checksums` | No | `true` | Generate and verify SHA256 checksums |
+| `publish` | No | `true` | Create the tag and GitHub release after validation |
 | `draft` | No | `false` | Create release as draft |
 
 **Default platforms:**
