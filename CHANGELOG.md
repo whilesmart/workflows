@@ -2,6 +2,14 @@
 
 All notable changes to these reusable actions are documented in this file.
 
+## [1.3.0] - 2026-09-02
+
+### Added
+
+- A reusable Go release workflow with separate validation, artifact building, and publication jobs
+- Retryable publication when the requested tag already points to the release commit
+- Failed publication when configured asset patterns match no files
+
 ## [1.2.0] - 2026-08-30
 
 ### Changed
