@@ -1,0 +1,266 @@
+name: Go release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Version to release. When omitted, the version comes from the pushed tag.
+        required: false
+        type: string
+        default: ''
+      go_version:
+        description: Go version to use.
+        required: false
+        type: string
+        default: '1.24'
+      typst_version:
+        description: Typst version required by the test suite.
+        required: false
+        type: string
+        default: ''
+      release_branch:
+        description: Branch that must contain the released commit.
+        required: false
+        type: string
+        default: main
+      setup_command:
+        description: Command that prepares project-specific dependencies.
+        required: false
+        type: string
+        default: ''
+      verify_command:
+        description: Command that validates release metadata.
+        required: false
+        type: string
+        default: ''
+      test_command:
+        description: Command that must pass before artifacts are built.
+        required: false
+        type: string
+        default: go build ./... && go vet ./... && go test -race -count=1 ./...
+      build_command:
+        description: Command that writes release artifacts to dist.
+        required: true
+        type: string
+      release_notes_file:
+        description: Release notes path. Use {tag} where the version tag belongs.
+        required: false
+        type: string
+        default: ''
+      assets:
+        description: Newline-separated release asset patterns.
+        required: false
+        type: string
+        default: dist/**
+      generate_checksums:
+        description: Generate and verify checksums after the build.
+        required: false
+        type: boolean
+        default: true
+      publish:
+        description: Create the tag and GitHub release after validation.
+        required: false
+        type: boolean
+        default: true
+      draft:
+        description: Create the GitHub release as a draft.
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  validate:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      source: ${{ steps.version.outputs.source }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go_version }}
+
+      - if: inputs.typst_version != ''
+        uses: typst-community/setup-typst@v5
+        with:
+          typst-version: ${{ inputs.typst_version }}
+
+      - name: Determine version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="${INPUT_VERSION#v}"
+            SOURCE=input
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            SOURCE=tag
+          else
+            echo '::error::Provide a version or call this workflow from a version tag.'
+            exit 1
+          fi
+
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+].+)?$'; then
+            echo "::error::$VERSION is not a semantic version."
+            exit 1
+          fi
+
+          {
+            echo "version=$VERSION"
+            echo "tag=v$VERSION"
+            echo "source=$SOURCE"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Require the release branch
+        if: inputs.release_branch != ''
+        env:
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+        run: |
+          git fetch origin "$RELEASE_BRANCH"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$RELEASE_BRANCH"; then
+            echo "::error::$GITHUB_SHA is not contained in $RELEASE_BRANCH."
+            exit 1
+          fi
+
+      - name: Set up release dependencies
+        if: inputs.setup_command != ''
+        env:
+          COMMAND: ${{ inputs.setup_command }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: bash -euo pipefail -c "$COMMAND"
+
+      - name: Validate release metadata
+        if: inputs.verify_command != ''
+        env:
+          COMMAND: ${{ inputs.verify_command }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: bash -euo pipefail -c "$COMMAND"
+
+      - name: Test release
+        if: inputs.test_command != ''
+        env:
+          COMMAND: ${{ inputs.test_command }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: bash -euo pipefail -c "$COMMAND"
+
+  build:
+    needs: validate
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go_version }}
+
+      - name: Set up release dependencies
+        if: inputs.setup_command != ''
+        env:
+          COMMAND: ${{ inputs.setup_command }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: bash -euo pipefail -c "$COMMAND"
+
+      - name: Build release artifacts
+        env:
+          COMMAND: ${{ inputs.build_command }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: bash -euo pipefail -c "$COMMAND"
+
+      - name: Generate checksums
+        if: inputs.generate_checksums
+        run: |
+          cd dist
+          sha256sum ./* > checksums.txt
+          sha256sum -c checksums.txt
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-release-${{ needs.validate.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: [validate, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: go-release-${{ needs.validate.outputs.version }}
+          path: dist
+
+      - name: Prepare release notes
+        id: notes
+        env:
+          RELEASE_NOTES_FILE: ${{ inputs.release_notes_file }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          NOTES="$RUNNER_TEMP/go-release-notes.md"
+          if [ -n "$RELEASE_NOTES_FILE" ]; then
+            NOTES_SOURCE="${RELEASE_NOTES_FILE//\{tag\}/$TAG}"
+            if [ ! -s "$NOTES_SOURCE" ]; then
+              echo "::error::Release notes are missing: $NOTES_SOURCE"
+              exit 1
+            fi
+            cp "$NOTES_SOURCE" "$NOTES"
+          elif [ -f CHANGELOG.md ]; then
+            awk -v version="$VERSION" '
+              /^## / {
+                if (printing) exit
+                if (index($0, "[" version "]") || index($0, " " version " ") || $2 == version) { printing=1; next }
+              }
+              printing { print }
+            ' CHANGELOG.md > "$NOTES"
+            if [ ! -s "$NOTES" ]; then
+              echo "::error::CHANGELOG.md has no release notes for $VERSION."
+              exit 1
+            fi
+          else
+            echo "Release $VERSION" > "$NOTES"
+          fi
+          echo "path=$NOTES" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag
+        if: inputs.publish && needs.validate.outputs.source == 'input'
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG already exists."
+            exit 1
+          fi
+          git config --local user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config --local user.name 'github-actions[bot]'
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+      - name: Publish GitHub release
+        if: inputs.publish
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.validate.outputs.tag }}
+          name: ${{ needs.validate.outputs.tag }}
+          body_path: ${{ steps.notes.outputs.path }}
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
+          files: ${{ inputs.assets }}

@@ -96,9 +96,49 @@ and everything under it up to the next heading becomes the release notes.
 
 ## Go Workflows
 
+### Release pipeline (`.github/workflows/go-release.yml`)
+
+Runs validation, artifact building, and publication as separate jobs. Projects
+keep their release-specific commands while this workflow controls when a tag
+and GitHub release can be created.
+
+```yaml
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    uses: whilesmart/workflows/.github/workflows/go-release.yml@v1
+    with:
+      go_version: '1.24'
+      typst_version: '0.14.2'
+      release_branch: main
+      verify_command: ./scripts/release-check.sh "$RELEASE_TAG"
+      build_command: ./scripts/build-release.sh "$RELEASE_TAG"
+      release_notes_file: docs/releases/{tag}.md
+      generate_checksums: false
+      assets: dist/*
+```
+
+The caller grants write access for publication. The workflow narrows validation
+and building to read access, then leaves that write access available only to the
+final job after both earlier jobs pass.
+
+Use `publish: false` to exercise all three jobs without creating a tag or
+GitHub release.
+
 ### Release (`go/release`)
 
-Builds cross-platform Go binaries and creates a GitHub release with downloadable assets.
+Composite action for callers that need the release stages inside one job. Use
+the release pipeline above when validation, building, and publication need
+separate job boundaries.
 
 **Features:**
 - Cross-compilation for Linux, macOS, Windows (amd64, arm64)
