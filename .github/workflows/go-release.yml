@@ -246,8 +246,13 @@ jobs:
           TAG: ${{ needs.validate.outputs.tag }}
         run: |
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "::error::$TAG already exists."
-            exit 1
+            TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+            if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+              echo "::error::$TAG already points to $TAG_COMMIT, not $GITHUB_SHA."
+              exit 1
+            fi
+            echo "$TAG already points to $GITHUB_SHA."
+            exit 0
           fi
           git config --local user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git config --local user.name 'github-actions[bot]'
@@ -264,3 +269,4 @@ jobs:
           draft: ${{ inputs.draft }}
           prerelease: ${{ contains(needs.validate.outputs.version, '-') }}
           files: ${{ inputs.assets }}
+          fail_on_unmatched_files: true
