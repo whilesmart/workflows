@@ -367,6 +367,7 @@ where the deliverable is the package itself.
 
 **Features:**
 - Publishes to any npm-compatible registry, GitHub Packages by default
+- Publishes without a token where the registry trusts the workflow
 - Parses release notes from `CHANGELOG.md`, and refuses to publish a version
   that has no entry
 - Checks a tag against `package.json` when triggered by one
@@ -409,6 +410,28 @@ token for it:
           registry: https://registry.npmjs.org
           access: public
 ```
+
+Set `trusted` where the registry trusts this workflow instead of a token. The
+action then runs Node 22.14 with npm 11.5.1 or later, and publishes from a step
+that carries no token, so the release carries a provenance attestation. It
+refuses to run without `id-token: write`, and against GitHub Packages, which
+cannot trust a workflow. The job needs
+`id-token: write`, and the registry needs the repository and the workflow
+filename recorded against the package:
+
+```yaml
+permissions:
+  contents: write
+  id-token: write
+
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          registry: https://registry.npmjs.org
+          access: public
+          trusted: 'true'
+```
+
+`token` is still read, for the GitHub release.
 
 ---
 
