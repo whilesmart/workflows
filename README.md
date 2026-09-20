@@ -402,7 +402,8 @@ jobs:
 ```
 
 Publishing to the public registry instead needs `registry`, `access`, and a
-token for it:
+token for it. `token` authenticates the registry, and the GitHub release is made
+with the job token unless `github_token` says otherwise:
 
 ```yaml
         with:
