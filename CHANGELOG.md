@@ -2,6 +2,14 @@
 
 All notable changes to these reusable actions are documented in this file.
 
+## [1.5.0] - 2026-09-20
+
+### Fixed
+
+- `js/publish` made its GitHub release with the registry token, so publishing to a registry
+  whose token is not a GitHub token failed after the package was already published. The
+  release now uses the job token, or `github_token` where a caller needs another.
+
 ## [1.4.0] - 2026-09-20
 
 ### Added

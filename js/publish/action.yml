@@ -3,8 +3,13 @@ description: 'Publishes a JavaScript package to a registry and creates the GitHu
 
 inputs:
   token:
-    description: 'The GitHub token for authentication.'
-    required: true
+    description: 'The registry token. Not needed when the registry trusts this workflow.'
+    required: false
+    default: ''
+  github_token:
+    description: 'The token that creates the GitHub release. Defaults to the job token.'
+    required: false
+    default: ''
   registry:
     description: 'The registry to publish to'
     required: false
@@ -199,7 +204,7 @@ runs:
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
-        token: ${{ inputs.token }}
+        token: ${{ inputs.github_token != '' && inputs.github_token || github.token }}
         tag_name: v${{ steps.get_version.outputs.version }}
         name: v${{ steps.get_version.outputs.version }}
         body_path: ${{ runner.temp }}/release-notes.md
