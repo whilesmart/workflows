@@ -2,6 +2,16 @@
 
 All notable changes to these reusable actions are documented in this file.
 
+## [1.4.0] - 2026-09-20
+
+### Added
+
+- `js/publish` takes `trusted`, publishing with a registry that trusts the workflow rather
+  than a token. It pins Node to 22.14 and npm to 11.5.1 or later, the versions a registry
+  requires before it will accept an attested publish, and publishes from a step that
+  carries no token at all. It refuses to run without the `id-token: write` permission,
+  and against a registry that cannot trust a workflow.
+
 ## [1.3.0] - 2026-09-02
 
 ### Added

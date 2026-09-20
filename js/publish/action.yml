@@ -17,6 +17,10 @@ inputs:
     description: 'public or restricted, passed to npm publish'
     required: false
     default: ''
+  trusted:
+    description: 'Publish with the registry trusting this workflow, rather than a token'
+    required: false
+    default: 'false'
   node_version:
     description: 'Node.js version to use'
     required: false
@@ -41,9 +45,36 @@ runs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: ${{ inputs.node_version }}
+        node-version: "${{ inputs.trusted == 'true' && '22.14.0' || inputs.node_version }}"
         registry-url: ${{ inputs.registry }}
         scope: ${{ inputs.scope }}
+
+    - name: Check the preconditions for trust
+      if: inputs.trusted == 'true'
+      shell: bash
+      env:
+        REGISTRY: ${{ inputs.registry }}
+      run: |
+        # GitHub exports this only when the job grants id-token: write, so its absence
+        # names the missing permission instead of failing later inside npm.
+        if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+          echo '::error::trusted publishing needs the calling job to grant id-token: write'
+          exit 1
+        fi
+
+        HOST=$(printf '%s' "$REGISTRY" | sed -E 's#^[a-z]+://##; s#/.*$##')
+        if [ "$HOST" = 'npm.pkg.github.com' ]; then
+          echo "::error::$HOST cannot trust a workflow; set the registry input to one that can"
+          exit 1
+        fi
+
+    # Node 22 ships npm 10, and a registry only trusts a workflow from 11.5.1 onward.
+    # Installed from the public registry, because the configured one may want the
+    # credential this mode deliberately withholds.
+    - name: Upgrade npm
+      if: inputs.trusted == 'true'
+      shell: bash
+      run: npm install -g npm@^11.5.1 --registry=https://registry.npmjs.org
 
     - name: Extract version from package.json
       id: get_version
@@ -137,16 +168,33 @@ runs:
 
         echo "Found changelog entry for version $VERSION"
 
-    - name: Publish
+    # Two steps rather than one with a conditional token: an expression that picks
+    # between a value and an empty string returns the value either way, and a token
+    # present is used in preference to the credential the registry mints.
+    - name: Publish with a token
+      if: inputs.trusted != 'true'
       shell: bash
       run: |
         ACCESS=""
-        if [ -n "${{ inputs.access }}" ]; then
-          ACCESS="--access ${{ inputs.access }}"
+        if [ -n "$ACCESS_INPUT" ]; then
+          ACCESS="--access $ACCESS_INPUT"
         fi
         npm publish $ACCESS
       env:
+        ACCESS_INPUT: ${{ inputs.access }}
         NODE_AUTH_TOKEN: ${{ inputs.token }}
+
+    - name: Publish
+      if: inputs.trusted == 'true'
+      shell: bash
+      env:
+        ACCESS_INPUT: ${{ inputs.access }}
+      run: |
+        ACCESS=""
+        if [ -n "$ACCESS_INPUT" ]; then
+          ACCESS="--access $ACCESS_INPUT"
+        fi
+        npm publish $ACCESS
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
@@ -158,8 +206,11 @@ runs:
 
     - name: Summary
       shell: bash
+      env:
+        VERSION: ${{ steps.get_version.outputs.version }}
+        REGISTRY: ${{ inputs.registry }}
       run: |
         echo "### Published" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "- Version: ${{ steps.get_version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-        echo "- Registry: ${{ inputs.registry }}" >> $GITHUB_STEP_SUMMARY
+        echo "- Version: $VERSION" >> $GITHUB_STEP_SUMMARY
+        echo "- Registry: $REGISTRY" >> $GITHUB_STEP_SUMMARY
